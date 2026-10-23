@@ -1,0 +1,46 @@
+name: Skarbiec bot
+
+on:
+  schedule:
+    - cron: "23 4 * * *"     # 6:23 (lato) / 5:23 (zima) w Polsce – cennik Cardmarketu jest gotowy ok. 3:00
+    - cron: "23 14 * * *"    # zapasowo po południu
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Wyślij tylko wiadomość testową na Discord"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: skarbiec-bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet cryptography
+      - name: Bot
+        env:
+          SKARBIEC_PASSWORD: ${{ secrets.SKARBIEC_PASSWORD }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          if [ "${{ inputs.test }}" = "true" ]; then python bot/skarbiec.py --test; else python bot/skarbiec.py; fi
+      - name: Zapisz dane
+        if: ${{ inputs.test != true }}
+        run: |
+          git config user.name "skarbiec-bot"
+          git config user.email "skarbiec-bot@users.noreply.github.com"
+          git add docs/
+          git diff --cached --quiet && exit 0
+          git commit -m "dane $(date -u +%F)"
+          for i in 1 2 3; do git pull --rebase -X theirs && git push && exit 0; sleep 5; done
+          exit 1

@@ -1,0 +1,1180 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Skarbiec</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Crect x='9' y='6' width='14' height='20' rx='2' fill='none' stroke='white' stroke-width='2.4'/%3E%3Cpath d='M12 19l3-3 2 2 3-4' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  color-scheme:light;
+  --page:#f9f9f7;--surface:#fcfcfb;--surface-2:#f3f2ee;--ink:#0b0b0b;--ink-2:#52514e;--muted:#898781;
+  --grid:#e1e0d9;--axis:#c3c2b7;--ring:rgba(11,11,11,.10);
+  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s7:#6250d6;--s8:#e34948;
+  --good:#0ca30c;--good-ink:#006300;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;
+  --accent:#2a78d6;--accent-ink:#fff;--shadow:0 1px 2px rgba(0,0,0,.04),0 4px 16px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --page:#0d0d0d;--surface:#1a1a19;--surface-2:#232321;--ink:#f0efec;--ink-2:#c3c2b7;--muted:#898781;
+  --grid:#2c2c2a;--axis:#383835;--ring:rgba(255,255,255,.10);
+  --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s7:#9085e9;--s8:#e66767;
+  --good-ink:#0ca30c;--accent:#3987e5;--shadow:none;
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --page:#0d0d0d;--surface:#1a1a19;--surface-2:#232321;--ink:#f0efec;--ink-2:#c3c2b7;--muted:#898781;
+  --grid:#2c2c2a;--axis:#383835;--ring:rgba(255,255,255,.10);
+  --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s7:#9085e9;--s8:#e66767;
+  --good-ink:#0ca30c;--accent:#3987e5;--shadow:none;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+a{color:var(--accent)}
+button,input,select,textarea{font:inherit;color:inherit}
+.wrap{max-width:1200px;margin:0 auto;padding:0 16px}
+header.top{position:sticky;top:0;z-index:20;background:var(--page);border-bottom:1px solid var(--grid)}
+.bar{display:flex;align-items:center;gap:12px;height:56px}
+.logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;letter-spacing:-.01em}
+.logo svg{width:24px;height:24px}
+.bar .meta{color:var(--muted);font-size:12px;margin-left:auto;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+nav.tabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+nav.tabs::-webkit-scrollbar{display:none}
+nav.tabs button{border:0;background:none;padding:10px 12px;border-bottom:2px solid transparent;color:var(--ink-2);cursor:pointer;white-space:nowrap;font-weight:500}
+nav.tabs button[aria-current="page"]{color:var(--ink);border-bottom-color:var(--accent)}
+main{padding:24px 0 60px}
+h1{font-size:22px;margin:0 0 4px;letter-spacing:-.01em}
+h2{font-size:16px;margin:0 0 10px}
+h3{font-size:14px;margin:0 0 8px}
+.sub{color:var(--ink-2);margin:0 0 16px}
+.muted{color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--ring);border-radius:12px;padding:16px;box-shadow:var(--shadow);min-width:0}
+.grid{display:grid;gap:12px}
+.g4{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.g2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+@media (max-width:420px){.g2,.g3{grid-template-columns:1fr}}
+@media (max-width:560px){.g4{grid-template-columns:1fr 1fr}.stat .val{font-size:20px}.bar .meta .fx{display:none}.card{padding:14px}}
+.stack>*+*{margin-top:12px}
+.stat .lbl{color:var(--ink-2);font-size:12px}
+.stat .val{font-size:26px;font-weight:650;letter-spacing:-.02em;margin:2px 0}
+.stat .note{font-size:12px;color:var(--muted)}
+.up{color:var(--good-ink)}.down{color:var(--critical)}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.spread{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.btn{border:1px solid var(--ring);background:var(--surface);border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:500;white-space:nowrap}
+.btn:hover{background:var(--surface-2)}
+.btn.primary{background:var(--accent);border-color:transparent;color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--critical)}
+.btn.sm{padding:4px 8px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:default}
+input[type=text],input[type=password],input[type=number],input[type=date],input[type=search],select,textarea{
+  background:var(--surface);border:1px solid var(--axis);border-radius:8px;padding:7px 10px;min-width:0}
+input:focus,select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink-2)}
+label.f>input,label.f>select,label.f>textarea{font-size:14px;color:var(--ink)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--ring);background:var(--surface);border-radius:999px;padding:5px 12px;cursor:pointer;font-size:13px}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--page);border-color:transparent}
+.tblw{overflow-x:auto;margin:0 -16px;padding:0 16px}
+table.tbl{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.tbl th{font-size:12px;font-weight:500;color:var(--muted);text-align:right;padding:6px 8px;border-bottom:1px solid var(--grid);white-space:nowrap}
+.tbl td{padding:8px;border-bottom:1px solid var(--grid);text-align:right;white-space:nowrap}
+.tbl th:first-child,.tbl td:first-child{text-align:left;padding-left:0}
+.tbl td.name{white-space:normal;min-width:180px}
+.tbl tr:last-child td{border-bottom:0}
+.tbl tr.click{cursor:pointer}.tbl tr.click:hover td{background:var(--surface-2)}
+.nm{font-weight:500}.nm small{display:block;color:var(--muted);font-weight:400}
+.badge{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:500;background:var(--surface-2);color:var(--ink-2);white-space:nowrap}
+.badge.good{color:var(--good-ink)}.badge.crit{color:var(--critical)}.badge.warn{color:var(--ink)}
+.badge .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.badge.warn .dot{background:var(--warning)}
+.chart{position:relative;height:260px}
+.chart.sm{height:180px}
+.spark{display:block}
+.empty{padding:28px 16px;text-align:center;color:var(--ink-2)}
+.empty .big{font-size:15px;color:var(--ink);font-weight:600;margin-bottom:6px}
+.alert-item{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--grid)}
+.alert-item:last-child{border-bottom:0}
+.alert-item .k{width:4px;border-radius:2px;flex:none}
+.alert-item .t{font-weight:600}
+.alert-item .d{color:var(--ink-2);white-space:pre-wrap;font-size:13px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink-2);margin:0 0 6px}
+.legend i{display:inline-block;width:14px;height:2px;vertical-align:middle;margin-right:6px;border-radius:1px}
+.legend i.dash{background:repeating-linear-gradient(90deg,currentColor 0 4px,transparent 4px 7px)!important;height:2px}
+dialog{border:1px solid var(--ring);border-radius:14px;background:var(--surface);color:var(--ink);padding:0;width:min(720px,calc(100vw - 24px));max-height:calc(100vh - 40px)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.dlg-h{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--grid);gap:8px}
+.dlg-h h2{margin:0}
+.dlg-b{padding:16px;overflow:auto;max-height:calc(100vh - 160px)}
+.x{border:0;background:none;font-size:22px;line-height:1;cursor:pointer;color:var(--ink-2);padding:4px 8px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--page);padding:10px 16px;border-radius:10px;z-index:100;max-width:calc(100vw - 32px);box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.login{min-height:100vh;display:grid;place-items:center;padding:16px}
+.login .card{width:min(420px,100%);padding:24px}
+.banner{border-radius:10px;padding:10px 12px;background:var(--surface-2);border:1px solid var(--ring);font-size:13px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-variant-numeric:tabular-nums}
+.kv dt{color:var(--ink-2)}.kv dd{margin:0;text-align:right;font-weight:500}
+.hide{display:none!important}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--axis);border-top-color:var(--accent);border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.drop{border:2px dashed var(--axis);border-radius:12px;padding:22px 16px;text-align:center;color:var(--ink-2)}
+.drop.over{border-color:var(--accent);background:var(--surface-2)}
+.job{display:grid;grid-template-columns:96px 1fr;gap:12px;padding:12px 0;border-bottom:1px solid var(--grid)}
+.job:last-child{border-bottom:0}
+.job>img,.ph img{width:96px;border-radius:8px;object-fit:cover;background:var(--surface-2)}
+.sc-card{display:grid;grid-template-columns:auto 52px 1fr;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--grid)}
+.sc-card:first-of-type{border-top:0}
+.sc-card img{width:52px;border-radius:4px;background:var(--surface-2)}
+.sc-card .ctl{grid-column:3;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.sc-card select{max-width:100%}
+.sc-card input[type=number]{width:72px}
+.phgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+.ph{border:0;padding:0;background:none;cursor:pointer;text-align:left;font-size:11px;color:var(--muted)}
+.ph img{width:100%;aspect-ratio:3/4}
+@media (max-width:560px){.job{grid-template-columns:64px 1fr}.job>img{width:64px}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+'use strict';
+/* ============================================================
+   Skarbiec – panel inwestycyjny kart Pokémon
+   Dane: publiczny cennik Cardmarketu (bot GitHub Actions) + twój zaszyfrowany skarbiec.
+   Wszystko, co prywatne (watchlisty, portfel, historia), jest szyfrowane AES-256-GCM
+   kluczem z twojego hasła (PBKDF2, 310 000 iteracji). Hasło nigdy nie opuszcza przeglądarki.
+   ============================================================ */
+const ITER = 310000;
+const DEFAULT_SETTINGS = { drop_alert_pct: 10, card_drop_alert_pct: 25, dip_alert_pct: 20, profit_steps: [50, 100, 200, 400], weekly_summary: true, summary_weekday: 0 };
+const KIND = { S: 'Karta', D: 'Display / box', E: 'ETB', B: 'Booster', O: 'Inny sealed' };
+const S = { pw: null, vault: null, vaultSha: null, vaultSalt: null, market: null, meta: null, catalog: null, catMap: null, tab: 'pulpit', wl: null, charts: [], readOnly: true, branch: null };
+
+// ---------------- narzędzia ----------------
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const nfE = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'EUR' });
+const nfP0 = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN', maximumFractionDigits: 0 });
+const nfP2 = new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' });
+const E = v => v == null || isNaN(v) ? '—' : nfE.format(v);
+const P = v => v == null || isNaN(v) ? '—' : (Math.abs(v) < 100 ? nfP2 : nfP0).format(v);
+const pct = (a, b) => a != null && b ? (a - b) / b * 100 : null;
+const PC = (p, plus = true) => p == null || isNaN(p) ? '—' : `${p > 0 && plus ? '+' : p < 0 ? '−' : ''}${Math.abs(p).toFixed(1).replace('.', ',')}%`;
+const cls = p => p == null ? '' : p > 0.05 ? 'up' : p < -0.05 ? 'down' : '';
+const arrow = p => p == null ? '' : p > 0.05 ? '▲ ' : p < -0.05 ? '▼ ' : '';
+const dPL = d => d ? new Date(d + (d.length === 10 ? 'T12:00:00' : '')).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const keyOf = it => `${+it.id}${it.holo ? 'h' : ''}`;
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const ls = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
+function toast(msg, ms = 2600) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), ms); }
+function addDays(iso, n) { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function taxFreeFrom(iso) { const d = new Date(iso + 'T12:00:00Z'); const m = d.getUTCMonth() + 7; return new Date(Date.UTC(d.getUTCFullYear() + Math.floor(m / 12), m % 12, 1)).toISOString().slice(0, 10); }
+
+// ---------------- kryptografia (zgodna z botem) ----------------
+const b64d = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const b64e = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); return btoa(s); };
+const keyCache = new Map();
+function deriveKey(pw, salt) {
+  const id = pw + '|' + b64e(salt);
+  if (!keyCache.has(id)) keyCache.set(id, (async () => {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: ITER, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  })());
+  return keyCache.get(id);
+}
+const pipe = async (u8, stream) => new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(stream)).arrayBuffer());
+async function decryptBlob(blob, pw) {
+  const salt = b64d(blob.salt);
+  const pt = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64d(blob.iv) }, await deriveKey(pw, salt), b64d(blob.ct)));
+  return { obj: JSON.parse(new TextDecoder().decode(await pipe(pt, new DecompressionStream('gzip')))), salt };
+}
+async function encryptBlob(obj, pw, salt) {
+  salt = salt || crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = await pipe(new TextEncoder().encode(JSON.stringify(obj)), new CompressionStream('gzip'));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await deriveKey(pw, salt), data));
+  return { v: 1, kdf: 'PBKDF2-SHA256', iter: ITER, salt: b64e(salt), iv: b64e(iv), ct: b64e(ct) };
+}
+
+// ---------------- GitHub (zapis zmian i uruchamianie bota) ----------------
+const GH = {
+  get api() { return ls.get('skarbiec_api') || 'https://api.github.com'; },
+  get token() { return ls.get('skarbiec_token') || ''; },
+  get repo() {
+    const o = ls.get('skarbiec_repo'); if (o) return o;
+    const m = location.hostname.match(/^([^.]+)\.github\.io$/); const seg = location.pathname.split('/').filter(Boolean)[0];
+    return m && seg && !seg.endsWith('.html') ? `${m[1]}/${seg}` : '';
+  },
+  async call(path, opts = {}, repo = this.repo) {
+    if (!repo || !this.token) throw new Error('Brak tokenu GitHub lub nazwy repozytorium (Ustawienia).');
+    const r = await fetch(`${this.api}/repos/${repo}${path}`, { ...opts, headers: { Authorization: `Bearer ${this.token}`, Accept: opts.raw ? 'application/vnd.github.raw' : 'application/vnd.github+json', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
+    if (!r.ok) { let m = ''; try { m = (await r.json()).message; } catch {} throw new Error(`GitHub ${r.status}${m ? ': ' + m : ''}`); }
+    return r.status === 204 ? null : opts.raw ? r.blob() : r.json();
+  },
+  async branch() { if (!S.branch) S.branch = (await this.call('')).default_branch || 'main'; return S.branch; },
+  async getFile(path) {
+    try { const j = await this.call(`/contents/${path}`); return { text: new TextDecoder().decode(b64d(j.content.replace(/\n/g, ''))), sha: j.sha }; }
+    catch (e) { if (/ 404/.test(e.message)) return null; throw e; }
+  },
+  async putFile(path, text, sha, message) {
+    const body = { message, content: b64e(new TextEncoder().encode(text)), branch: await this.branch() };
+    if (sha) body.sha = sha;
+    return this.call(`/contents/${path}`, { method: 'PUT', body: JSON.stringify(body) });
+  },
+  async runBot(test) {
+    return this.call('/actions/workflows/bot.yml/dispatches', { method: 'POST', body: JSON.stringify({ ref: await this.branch(), ...(test ? { inputs: { test: 'true' } } : {}) }) });
+  },
+};
+// zdjęcia kart: osobne, prywatne repozytorium (ten sam token)
+const PHOTOS = {
+  get repo() { return ls.get('skarbiec_photo_repo') || (GH.repo ? `${GH.repo.split('/')[0]}/skarbiec-foto` : ''); },
+  branch: null,
+  async put(path, blob, message) {
+    if (!this.branch) this.branch = (await GH.call('', {}, this.repo)).default_branch || 'main';
+    const body = { message, content: b64e(new Uint8Array(await blob.arrayBuffer())), branch: this.branch };
+    return GH.call(`/contents/${path}`, { method: 'PUT', body: JSON.stringify(body) }, this.repo);
+  },
+  urls: new Map(),
+  url(path) {   // blob: URL do wyświetlenia (repo jest prywatne, więc przez API z tokenem)
+    if (!this.urls.has(path)) this.urls.set(path, GH.call(`/contents/${path.split('/').map(encodeURIComponent).join('/')}`, { raw: true }, this.repo).then(b => URL.createObjectURL(b)).catch(e => { this.urls.delete(path); throw e; }));
+    return this.urls.get(path);
+  },
+};
+async function fetchPublic(path) {
+  const r = await fetch(`${path}?t=${Date.now()}`, { cache: 'no-store' });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+  return r.json();
+}
+
+// ---------------- dane ----------------
+function hist(key) { return S.market?.h?.[key] || []; }
+const fxNow = () => S.meta?.fx || (S.market?.fx ? S.market.fx[Object.keys(S.market.fx).sort().pop()] : null) || 4.3;
+const dataDay = () => S.meta?.day || S.market?.day || S.catalog?.day || null;
+function catRow(id) { return S.catMap?.get(+id) || null; }
+function nowPrice(it) {           // [trend, low, avg7, avg30, avg1] – historia bota, a gdy jej jeszcze nie ma: dzisiejszy katalog
+  const h = hist(keyOf(it)); if (h.length) return { trend: h.at(-1)[1], low: h.at(-1)[2], avg7: h.at(-1)[3], avg30: h.at(-1)[4], avg1: h.at(-1)[5], src: 'h', day: h.at(-1)[0] };
+  const r = catRow(it.id); if (!r) return null;
+  return it.holo ? { trend: r[9], low: null, avg7: null, avg30: null, avg1: null, src: 'c' } : { trend: r[4], low: r[5], avg1: r[6], avg7: r[7], avg30: r[8], src: 'c' };
+}
+function valueAgo(key, days) {
+  const h = hist(key); if (!h.length) return null;
+  const lim = addDays(h.at(-1)[0], -days); let v = null;
+  for (const r of h) if (r[0] <= lim && r[1]) v = r[1];
+  return v;
+}
+function seriesSum(items, idx = 1) {
+  if (!items.length) return [];
+  const maps = items.map(it => new Map(hist(keyOf(it)).map(r => [r[0], r[idx]])));
+  const days = [...new Set(items.flatMap(it => hist(keyOf(it)).map(r => r[0])))].sort();
+  const out = [];
+  for (const d of days) {
+    let t = 0, ok = true;
+    items.forEach((it, i) => { const v = maps[i].get(d); if (v == null) ok = false; else t += v * (it.qty || 1); });
+    if (ok) out.push([d, t]);
+  }
+  return out;
+}
+function itemMeta(it) {
+  const r = catRow(it.id);
+  const name = it.name || (r ? r[1] : `#${it.id}`);
+  const set = it.set || (r ? S.catalog.exp[r[3]] : '') || '';
+  const kind = it.kind || (r ? S.catalog.kinds[r[2]] : '') || '';
+  return { name: name + (it.holo ? ' (Reverse Holo)' : ''), set, kind };
+}
+async function loadCatalog() {
+  if (S.catalog) return S.catalog;
+  if (!S._catP) S._catP = fetchPublic('catalog.json').then(c => {
+    if (!c) throw new Error('Brak katalogu – bot jeszcze ani razu się nie uruchomił.');
+    S.catalog = c; S.catMap = new Map(c.p.map(r => [r[0], r]));
+    c.p.forEach(r => { r.lc = (r[1] + ' ' + (c.exp[r[3]] || '')).toLowerCase(); });
+    return c;
+  }).catch(e => { S._catP = null; throw e; });
+  return S._catP;
+}
+
+// ---------------- zapis skarbca ----------------
+async function saveVault(msg) {
+  const revert = () => { S.vault = JSON.parse(S.vaultSaved); };
+  if (S.readOnly) { revert(); toast('Tryb tylko do odczytu – nic nie zapisano. Dodaj token GitHub w Ustawieniach.', 4500); return false; }
+  S.vault.updated = new Date().toISOString();
+  const blob = await encryptBlob(S.vault, S.pw, S.vaultSalt);
+  try {
+    const r = await GH.putFile('docs/vault.enc', JSON.stringify(blob), S.vaultSha, msg || 'skarbiec: zmiana');
+    S.vaultSha = r.content.sha; S.vaultSaved = JSON.stringify(S.vault); toast('Zapisano ✓ Bot uwzględni zmiany przy najbliższym pomiarze.');
+    return true;
+  } catch (e) {
+    revert();
+    if (/ 409| 422/.test(e.message)) toast('Skarbiec zmienił się na innym urządzeniu – odśwież stronę i spróbuj ponownie.', 5000);
+    else toast('Nie zapisano: ' + e.message, 5000);
+    return false;
+  }
+}
+
+// ---------------- wykresy ----------------
+function killCharts() { S.charts.forEach(c => c.destroy()); S.charts = []; }
+function lineChart(canvas, labels, sets, { money = 'E', target = null, targetLabel = 'Próg' } = {}) {
+  if (!window.Chart || !canvas) return;
+  const fmt = money === 'P' ? P : E;
+  const grid = css('--grid'), muted = css('--muted');
+  const datasets = sets.map(s => ({
+    label: s.label, data: s.data, borderColor: s.color, backgroundColor: s.color, borderWidth: 2, borderDash: s.dash || [],
+    pointRadius: labels.length <= 2 ? 4 : 0, pointHoverRadius: 5, pointHitRadius: 12, tension: 0.15, spanGaps: true, fill: false,
+  }));
+  if (target != null) datasets.push({ label: targetLabel, data: labels.map(() => target), borderColor: css('--s4'), borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0, pointHitRadius: 0 });
+  S.charts.push(new Chart(canvas, {
+    type: 'line', data: { labels: labels.map(d => d.length === 10 ? new Date(d + 'T12:00:00').toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' }) : d), datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${fmt(c.parsed.y)}` } } },
+      scales: {
+        x: { grid: { display: false }, border: { color: css('--axis') }, ticks: { color: muted, maxTicksLimit: 7, maxRotation: 0 } },
+        y: { grid: { color: grid }, border: { display: false }, ticks: { color: muted, maxTicksLimit: 5, callback: v => fmt(v).replace(/,00/, '') } },
+      },
+    },
+  }));
+}
+function legend(items) { return `<div class="legend">${items.map(([l, c, dash]) => `<span><i class="${dash ? 'dash' : ''}" style="background:${c};color:${c}"></i>${esc(l)}</span>`).join('')}</div>`; }
+function spark(vals, w = 84, h = 24) {
+  const v = vals.filter(x => x != null); if (v.length < 2) return '<span class="muted">—</span>';
+  const lo = Math.min(...v), hi = Math.max(...v), r = hi - lo || 1;
+  const pts = v.map((x, i) => `${(i / (v.length - 1) * (w - 4) + 2).toFixed(1)},${(h - 2 - (x - lo) / r * (h - 4)).toFixed(1)}`).join(' ');
+  const col = v.at(-1) >= v[0] ? 'var(--good-ink)' : 'var(--critical)';
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+}
+const KC = { buy: '--s3', drop: '--s8', info: '--s1', profit: '--s4', tax: '--s7', warn: '--s2' };
+const KL = { buy: 'Okazja', drop: 'Spadek', info: 'Info', profit: 'Zysk', tax: 'Podatek', warn: 'Uwaga' };
+function alertList(list) {
+  if (!list.length) return '<div class="empty">Brak alertów. Bot napisze na Discordzie, gdy coś się wydarzy.</div>';
+  return list.map(a => `<div class="alert-item"><span class="k" style="background:var(${KC[a.kind] || '--muted'})"></span><div style="min-width:0"><div class="t">${esc(a.title)}</div><div class="d">${esc(a.text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')}</div><div class="muted" style="font-size:12px;margin-top:2px">${dPL(a.d)} · ${KL[a.kind] || ''}</div></div></div>`).join('');
+}
+
+// ---------------- portfel: obliczenia ----------------
+function holdingsCalc() {
+  const fx = fxNow();
+  const active = [], sold = [];
+  for (const h of S.vault.portfolio || []) {
+    const m = itemMeta(h), p = nowPrice(h);
+    const value = p?.trend != null ? p.trend * (h.qty || 1) * fx : null;
+    const row = { h, m, p, value, cost: +h.cost_pln || 0 };
+    row.pl = value != null ? value - row.cost : null; row.plp = pct(value, row.cost);
+    row.d7 = pct(p?.trend, valueAgo(keyOf(h), 7));
+    row.free = h.date ? taxFreeFrom(h.date) : null;
+    (h.sold ? sold : active).push(row);
+  }
+  const value = active.reduce((a, r) => a + (r.value || 0), 0), cost = active.reduce((a, r) => a + r.cost, 0);
+  const realized = sold.reduce((a, r) => a + ((+r.h.sold.price_pln || 0) - r.cost), 0);
+  return { active, sold, value, cost, realized, unpriced: active.filter(r => r.value == null).length };
+}
+
+// ============================================================
+//   WIDOKI
+// ============================================================
+const TABS = [['pulpit', 'Pulpit'], ['watch', 'Watchlisty'], ['portfel', 'Portfel'], ['skaner', 'Skaner'], ['rynek', 'Rynek'], ['alerty', 'Alerty'], ['ustawienia', 'Ustawienia']];
+function shell() {
+  const d = dataDay();
+  $('#app').innerHTML = `
+  <header class="top"><div class="wrap">
+    <div class="bar">
+      <div class="logo"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="var(--accent)"/><rect x="9" y="6" width="14" height="20" rx="2" fill="none" stroke="#fff" stroke-width="2.4"/><path d="M12 19l3-3 2 2 3-4" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Skarbiec</div>
+      <div class="meta">${d ? `Ceny z ${dPL(d)}<span class="fx"> · EUR/PLN ${fxNow().toFixed(4).replace('.', ',')}</span>` : 'Brak danych – uruchom bota'}${S.readOnly ? ' · <b>tylko odczyt</b>' : ''}</div>
+      <button class="btn sm" data-act="theme" title="Zmień motyw" aria-label="Zmień motyw" style="display:grid;place-items:center;width:32px;height:32px;padding:0"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor"/></svg></button>
+    </div>
+    <nav class="tabs" aria-label="Sekcje">${TABS.map(([id, l]) => `<button data-act="tab" data-id="${id}" ${S.tab === id ? 'aria-current="page"' : ''}>${l}</button>`).join('')}</nav>
+  </div></header>
+  <main class="wrap" id="view"></main>`;
+  render();
+}
+function render() {
+  killCharts();
+  const v = $('#view'); if (!v) return;
+  document.querySelectorAll('nav.tabs button').forEach(b => b.dataset.id === S.tab ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'));
+  ({ pulpit: vPulpit, watch: vWatch, portfel: vPortfel, skaner: vSkaner, rynek: vRynek, alerty: vAlerty, ustawienia: vUstawienia })[S.tab](v);
+}
+
+// ---------- Pulpit ----------
+function vPulpit(v) {
+  const pf = holdingsCalc(), wls = S.vault.watchlists || [];
+  const alerts = (S.market?.alerts || []).slice(-4).reverse();
+  const a7 = (S.market?.alerts || []).filter(a => a.d >= addDays(dataDay() || todayISO(), -7)).length;
+  const plp = pct(pf.value, pf.cost);
+  const empty = !pf.active.length && !wls.length;
+  v.innerHTML = `
+  <h1>Pulpit</h1><p class="sub">Twój portfel i obserwowane zestawy według cen Cardmarketu.</p>
+  ${S.readOnly ? `<div class="banner" style="margin-bottom:12px">🔒 Tryb tylko do odczytu. Żeby dodawać karty i zmieniać listy, wklej token GitHub w <a href="#" data-act="tab" data-id="ustawienia">Ustawieniach</a>.</div>` : ''}
+  ${empty ? `<div class="card empty" style="margin-bottom:12px"><div class="big">Zacznij od trzech kroków</div>
+     1. <a href="#" data-act="tab" data-id="watch">Watchlisty</a> – zaimportuj listę z Tampermonkey albo dodaj karty z wyszukiwarki.<br>
+     2. <a href="#" data-act="tab" data-id="portfel">Portfel</a> – wpisz karty i sealed, które już masz (cena zakupu i data).<br>
+     3. <a href="#" data-act="tab" data-id="ustawienia">Ustawienia</a> – sprawdź alerty i wyślij wiadomość testową na Discord.</div>` : ''}
+  <div class="grid g4">
+    <div class="card stat"><div class="lbl">Wartość portfela</div><div class="val">${P(pf.value)}</div><div class="note">${pf.active.length} pozycji · wg trendu Cardmarketu${pf.unpriced ? ` · ${pf.unpriced} bez ceny` : ''}</div></div>
+    <div class="card stat"><div class="lbl">Zysk / strata (niezrealizowany)</div><div class="val ${cls(plp)}">${pf.cost ? (pf.value - pf.cost >= 0 ? '+' : '−') + P(Math.abs(pf.value - pf.cost)) : '—'}</div><div class="note"><span class="${cls(plp)}">${arrow(plp)}${PC(plp)}</span> · koszt ${P(pf.cost)}</div></div>
+    <div class="card stat"><div class="lbl">Zrealizowany zysk</div><div class="val ${cls(pf.realized)}">${pf.sold.length ? (pf.realized >= 0 ? '+' : '−') + P(Math.abs(pf.realized)) : '—'}</div><div class="note">${pf.sold.length} sprzedanych pozycji</div></div>
+    <div class="card stat"><div class="lbl">Alerty (7 dni)</div><div class="val">${a7}</div><div class="note">${wls.length} watchlist · ${(S.meta?.tracked ?? 0)} śledzonych pozycji</div></div>
+  </div>
+  <div class="grid g2" style="margin-top:12px;align-items:start">
+    <div class="card"><div class="spread"><h2>Wartość portfela</h2></div>
+      ${(S.market?.pv || []).length ? legend([['Wartość', css('--s1')], ['Koszt zakupu', css('--muted'), true]]) + '<div class="chart"><canvas id="c-pv"></canvas></div>' : '<div class="empty">Wykres pojawi się po pierwszym pomiarze bota z kartami w portfelu.</div>'}
+    </div>
+    <div class="card"><div class="spread"><h2>Ostatnie alerty</h2><button class="btn sm" data-act="tab" data-id="alerty">Wszystkie</button></div>${alertList(alerts)}</div>
+  </div>
+  ${wls.length ? `<h2 style="margin:20px 0 10px">Watchlisty</h2><div class="grid g3">${wls.map(wl => {
+    const ser = seriesSum(wl.items || []), now = ser.at(-1)?.[1] ?? (wl.items || []).reduce((a, it) => a + (nowPrice(it)?.trend || 0) * (it.qty || 1), 0);
+    const wk = ser.filter(([d]) => d <= addDays(ser.at(-1)?.[0] || '', -7)).at(-1)?.[1];
+    const p7 = pct(now, wk), below = wl.target_eur && now <= wl.target_eur;
+    return `<button class="card" style="text-align:left;cursor:pointer" data-act="openwl" data-id="${esc(wl.id)}">
+      <div class="spread"><b>${esc(wl.name)}</b>${wl.target_eur ? (below ? '<span class="badge good"><span class="dot"></span>Poniżej progu</span>' : `<span class="badge">próg ${E(wl.target_eur)}</span>`) : ''}</div>
+      <div class="spread" style="margin-top:8px;align-items:flex-end"><div><div class="val" style="font-size:20px;font-weight:650">${E(now)}</div>
+      <div class="note muted">${(wl.items || []).length} pozycji · 7 dni <span class="${cls(p7)}">${PC(p7)}</span></div></div>${spark(ser.slice(-60).map(x => x[1]))}</div></button>`;
+  }).join('')}</div>` : ''}
+  <div class="card" style="margin-top:12px" id="movers"><h2>Sealed na rynku: największe ruchy</h2><p class="muted" style="margin-top:-6px">Trend dziś względem średniej z 30 dni, produkty od 20 €. Kliknij, żeby zobaczyć szczegóły.</p><div><span class="spin"></span> Ładuję katalog…</div></div>`;
+  const pv = S.market?.pv || [];
+  if (pv.length) lineChart($('#c-pv'), pv.map(r => r[0]), [{ label: 'Wartość', data: pv.map(r => r[1]), color: css('--s1') }, { label: 'Koszt', data: pv.map(r => r[2]), color: css('--muted'), dash: [5, 4] }], { money: 'P' });
+  loadCatalog().then(c => {
+    const box = $('#movers'); if (!box || S.tab !== 'pulpit') return;
+    const rows = c.p.filter(r => c.kinds[r[2]] !== 'S' && r[4] >= 20 && r[8]).map(r => ({ r, ch: pct(r[4], r[8]) }));
+    const up = rows.filter(x => x.ch >= 0.5).sort((a, b) => b.ch - a.ch).slice(0, 5), down = rows.filter(x => x.ch <= -0.5).sort((a, b) => a.ch - b.ch).slice(0, 5);
+    const t = list => !list.length ? '<p class="muted">Brak wyraźnych ruchów.</p>' : `<table class="tbl"><tr><th>Produkt</th><th>Trend</th><th>vs 30 dni</th></tr>${list.map(({ r, ch }) => `<tr class="click" data-act="detail" data-id="${r[0]}"><td class="name"><div class="nm">${esc(r[1])}<small>${esc(c.exp[r[3]] || KIND[c.kinds[r[2]]])}</small></div></td><td>${E(r[4])}</td><td class="${cls(ch)}">${arrow(ch)}${PC(ch)}</td></tr>`).join('')}</table>`;
+    box.lastElementChild.outerHTML = rows.length ? `<div class="grid g2"><div><h3>Rosną</h3><div class="tblw">${t(up)}</div></div><div><h3>Spadają</h3><div class="tblw">${t(down)}</div></div></div>` : '<div class="muted">Brak danych sealed w cenniku.</div>';
+  }).catch(e => { const b = $('#movers'); if (b) b.lastElementChild.textContent = e.message; });
+}
+
+// ---------- Watchlisty ----------
+function vWatch(v) {
+  const wls = S.vault.watchlists || [];
+  if (!S.wl || !wls.find(w => w.id === S.wl)) S.wl = wls[0]?.id || null;
+  const wl = wls.find(w => w.id === S.wl);
+  v.innerHTML = `
+  <div class="spread"><div><h1>Watchlisty</h1><p class="sub">Zestawy, które obserwujesz. Bot pisze na Discord, gdy spadną poniżej progu albo mocno potanieją.</p></div>
+    <div class="row"><button class="btn" data-act="importTM">Import z Tampermonkey</button><button class="btn primary" data-act="newwl">+ Nowa lista</button></div></div>
+  ${wls.length ? `<div class="chips" style="margin-bottom:12px">${wls.map(w => `<button class="chip" data-act="openwl" data-id="${esc(w.id)}" aria-pressed="${w.id === S.wl}">${esc(w.name)} <span class="muted">${(w.items || []).length}</span></button>`).join('')}</div>` : ''}
+  <div id="wlbody">${wl ? '' : `<div class="card empty"><div class="big">Nie masz jeszcze żadnej watchlisty</div>Utwórz listę i dodaj do niej karty albo sealed z wyszukiwarki,<br>albo wklej konfigurację z przycisku 🤖 w trybie <code>#track</code> skryptu Tampermonkey.</div>`}</div>`;
+  if (!wl) return;
+  const items = wl.items || [];
+  const ser = seriesSum(items), labels = ser.map(r => r[0]);
+  const now = ser.at(-1)?.[1] ?? items.reduce((a, it) => a + (nowPrice(it)?.trend || 0) * (it.qty || 1), 0);
+  const back = n => ser.filter(([d]) => d <= addDays(ser.at(-1)?.[0] || '', -n)).at(-1)?.[1];
+  const peak = ser.length ? Math.max(...ser.map(r => r[1])) : null;
+  const avg30sum = items.every(it => nowPrice(it)?.avg30) ? items.reduce((a, it) => a + nowPrice(it).avg30 * (it.qty || 1), 0) : null;
+  const rows = items.map(it => {
+    const p = nowPrice(it), m = itemMeta(it), k = keyOf(it), h = hist(k);
+    const d1 = h.length >= 2 ? pct(h.at(-1)[1], h.at(-2)[1]) : null, d7 = pct(p?.trend, valueAgo(k, 7)), v30 = pct(p?.trend, p?.avg30);
+    const hit = it.buy_below && p?.trend != null && p.trend <= it.buy_below;
+    return { it, p, m, d1, d7, v30, hit, sp: h.slice(-60).map(r => r[1]) };
+  }).sort((a, b) => (b.p?.trend || 0) * (b.it.qty || 1) - (a.p?.trend || 0) * (a.it.qty || 1));
+  $('#wlbody').innerHTML = `
+  <div class="card">
+    <div class="spread"><div><h2 style="margin:0">${esc(wl.name)}</h2><div class="muted" style="font-size:12px">${items.length} pozycji · suma według ${wl.metric === 'avg7' ? 'średniej z 7 dni' : 'trendu'} Cardmarketu</div></div>
+      <div class="row"><button class="btn sm" data-act="addto" data-mode="watch">+ Dodaj pozycję</button><button class="btn sm" data-act="editwl">Ustawienia listy</button><button class="btn sm" data-act="exportwl">Kopiuj JSON</button></div></div>
+    <div class="grid g4" style="margin:14px 0">
+      <div class="stat"><div class="lbl">Suma teraz</div><div class="val">${E(now)}</div><div class="note">≈ ${P(now * fxNow())}</div></div>
+      <div class="stat"><div class="lbl">Zmiana 7 dni</div><div class="val ${cls(pct(now, back(7)))}">${PC(pct(now, back(7)))}</div><div class="note">30 dni: ${PC(pct(now, back(30)))} · vs śr. 30 dni: ${PC(pct(now, avg30sum))}</div></div>
+      <div class="stat"><div class="lbl">Od szczytu</div><div class="val ${cls(pct(now, peak))}">${PC(pct(now, peak))}</div><div class="note">szczyt ${E(peak)}${ser.length ? ' od ' + dPL(ser[0][0]) : ''}</div></div>
+      <div class="stat"><div class="lbl">Próg okazji</div><div class="val">${wl.target_eur ? E(wl.target_eur) : '—'}</div><div class="note">${wl.target_eur ? (now <= wl.target_eur ? '<span class="badge good"><span class="dot"></span>poniżej progu</span>' : `brakuje ${E(now - wl.target_eur)} (${PC(pct(wl.target_eur, now))})`) : '<a href="#" data-act="editwl">ustaw próg</a>'}</div></div>
+    </div>
+    ${ser.length >= 2 ? legend([['Suma listy', css('--s1')], ...(wl.target_eur ? [['Próg okazji', css('--s4'), true]] : [])]) + '<div class="chart"><canvas id="c-wl"></canvas></div>' : `<div class="banner">📈 Wykres pojawi się po drugim pomiarze bota (zapisuje ceny raz dziennie od chwili dodania pozycji).${ser.length ? '' : ' Nowe pozycje dostaną pierwszy pomiar przy najbliższym uruchomieniu bota.'}</div>`}
+  </div>
+  <div class="card" style="margin-top:12px"><div class="tblw"><table class="tbl">
+    <tr><th>Pozycja</th><th>Trend</th><th>1 dzień</th><th>7 dni</th><th>vs śr. 30 dni</th><th>Najtaniej*</th><th>Kup poniżej</th><th>60 dni</th><th></th></tr>
+    ${rows.map(r => `<tr class="click" data-act="detail" data-id="${r.it.id}" data-holo="${r.it.holo ? 1 : ''}">
+      <td class="name"><div class="nm">${esc(r.m.name)}${(r.it.qty || 1) > 1 ? ` ×${r.it.qty}` : ''}<small>${esc(r.m.set || KIND[r.m.kind] || '')}</small></div></td>
+      <td><b>${E(r.p?.trend)}</b></td><td class="${cls(r.d1)}">${PC(r.d1)}</td><td class="${cls(r.d7)}">${PC(r.d7)}</td><td class="${cls(r.v30)}">${PC(r.v30)}</td>
+      <td class="muted">${E(r.p?.low)}</td><td>${r.it.buy_below ? (r.hit ? `<span class="badge good"><span class="dot"></span>${E(r.it.buy_below)}</span>` : E(r.it.buy_below)) : '<span class="muted">—</span>'}</td>
+      <td>${spark(r.sp)}</td><td><button class="btn sm" data-act="edititem" data-k="${esc(keyOf(r.it))}" title="Edytuj">✎</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Pusta lista – dodaj pozycje.</td></tr>'}
+  </table></div><p class="muted" style="font-size:12px;margin:8px 0 0">* najtańsza oferta na Cardmarkecie w dowolnym języku i stanie – zwykle zaniżona względem EN/NM.</p></div>`;
+  if (ser.length >= 2) lineChart($('#c-wl'), labels, [{ label: 'Suma', data: ser.map(r => r[1]), color: css('--s1') }], { target: wl.target_eur || null });
+}
+
+// ---------- Portfel ----------
+function vPortfel(v) {
+  const pf = holdingsCalc(), today = todayISO();
+  const plp = pct(pf.value, pf.cost);
+  v.innerHTML = `
+  <div class="spread"><div><h1>Portfel</h1><p class="sub">Co masz, ile za to dałeś i ile to jest warte dziś. Wartość według trendu Cardmarketu.</p></div>
+    <button class="btn primary" data-act="addto" data-mode="portfel">+ Dodaj do portfela</button></div>
+  <div class="grid g4">
+    <div class="card stat"><div class="lbl">Wartość</div><div class="val">${P(pf.value)}</div><div class="note">≈ ${E(pf.value / fxNow())}</div></div>
+    <div class="card stat"><div class="lbl">Koszt zakupu</div><div class="val">${P(pf.cost)}</div><div class="note">${pf.active.length} pozycji</div></div>
+    <div class="card stat"><div class="lbl">Zysk / strata</div><div class="val ${cls(plp)}">${pf.cost ? (pf.value - pf.cost >= 0 ? '+' : '−') + P(Math.abs(pf.value - pf.cost)) : '—'}</div><div class="note ${cls(plp)}">${arrow(plp)}${PC(plp)}</div></div>
+    <div class="card stat"><div class="lbl">Można sprzedać bez PIT</div><div class="val">${pf.active.filter(r => r.free && r.free <= today).length} / ${pf.active.length}</div><div class="note">pół roku od końca miesiąca zakupu</div></div>
+  </div>
+  <div class="card" style="margin-top:12px"><h2>Wartość w czasie</h2>
+    ${(S.market?.pv || []).length >= 2 ? legend([['Wartość', css('--s1')], ['Koszt zakupu', css('--muted'), true]]) + '<div class="chart"><canvas id="c-pf"></canvas></div>' : '<div class="banner">📈 Wykres pojawi się po dwóch dniach pomiarów bota.</div>'}</div>
+  <div class="card" style="margin-top:12px"><h2>Pozycje</h2><div class="tblw"><table class="tbl">
+    <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
+    ${pf.active.sort((a, b) => (b.value || 0) - (a.value || 0)).map(r => `<tr>
+      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}">${esc(r.m.name)}<small>${esc([r.m.set || KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
+      <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
+      <td class="${cls(r.plp)}">${r.pl != null ? `${r.pl >= 0 ? '+' : '−'}${P(Math.abs(r.pl))}<br><small>${PC(r.plp)}</small>` : '—'}</td>
+      <td class="${cls(r.d7)}">${PC(r.d7)}</td>
+      <td>${r.free ? (r.free <= today ? '<span class="badge good"><span class="dot"></span>już teraz</span>' : `<span class="badge warn"><span class="dot"></span>${dPL(r.free)}</span>`) : '—'}</td>
+      <td><div class="row" style="justify-content:flex-end;flex-wrap:nowrap"><button class="btn sm" data-act="sell" data-uid="${r.h.uid}">Sprzedaj</button><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}" title="Edytuj">✎</button></div></td></tr>`).join('') || '<tr><td colspan="8" class="empty">Portfel jest pusty. Dodaj karty i sealed, które już masz – z ceną i datą zakupu.</td></tr>'}
+  </table></div></div>
+  ${pf.sold.length ? `<div class="card" style="margin-top:12px"><h2>Sprzedane</h2><div class="tblw"><table class="tbl"><tr><th>Pozycja</th><th>Koszt</th><th>Sprzedaż</th><th>Zysk</th><th>Data</th><th></th></tr>
+    ${pf.sold.map(r => { const g = (+r.h.sold.price_pln || 0) - r.cost; return `<tr><td class="name"><div class="nm">${esc(r.m.name)}<small>${r.h.qty || 1} szt.</small></div></td><td>${P(r.cost)}</td><td>${P(+r.h.sold.price_pln)}</td><td class="${cls(g)}">${g >= 0 ? '+' : '−'}${P(Math.abs(g))}</td><td>${dPL(r.h.sold.date)}${r.free && r.h.sold.date < r.free ? '<br><small class="down">przed upływem 6 mies.</small>' : ''}</td><td><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}">✎</button></td></tr>`; }).join('')}</table></div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Zrealizowany zysk razem: <b class="${cls(pf.realized)}">${pf.realized >= 0 ? '+' : '−'}${P(Math.abs(pf.realized))}</b></p></div>` : ''}`;
+  const pv = S.market?.pv || [];
+  if (pv.length >= 2) lineChart($('#c-pf'), pv.map(r => r[0]), [{ label: 'Wartość', data: pv.map(r => r[1]), color: css('--s1') }, { label: 'Koszt', data: pv.map(r => r[2]), color: css('--muted'), dash: [5, 4] }], { money: 'P' });
+}
+
+// ---------- Rynek ----------
+const R = { q: '', kind: 'sealed', min: 20, sort: 'up' };
+function vRynek(v) {
+  v.innerHTML = `
+  <h1>Rynek</h1><p class="sub">Wszystkie karty i sealed Pokémon z cennika Cardmarketu. Szukaj po nazwie albo przeglądaj największe ruchy.</p>
+  <div class="card">
+    <div class="row" style="gap:12px">
+      <input type="search" id="rq" placeholder="Szukaj: np. Charizard, Ascended Heroes, Elite Trainer…" value="${esc(R.q)}" style="flex:1;min-width:200px">
+      <select id="rsort" aria-label="Sortowanie"><option value="up">Największe wzrosty (vs 30 dni)</option><option value="down">Największe spadki (vs 30 dni)</option><option value="price">Najdroższe</option><option value="name">Nazwa</option></select>
+      <label class="row muted" style="font-size:13px">od <input type="number" id="rmin" value="${R.min}" min="0" step="1" style="width:80px"> €</label>
+    </div>
+    <div class="chips" style="margin-top:10px">${[['all', 'Wszystko'], ['sealed', 'Sealed'], ['S', 'Karty'], ['D', 'Displaye'], ['E', 'ETB'], ['B', 'Boostery']].map(([k, l]) => `<button class="chip" data-act="rkind" data-k="${k}" aria-pressed="${R.kind === k}">${l}</button>`).join('')}</div>
+  </div>
+  <div class="card" style="margin-top:12px" id="rres"><span class="spin"></span> Ładuję katalog (kilka MB, tylko za pierwszym razem)…</div>`;
+  $('#rsort').value = R.sort;
+  let t; const go = () => { clearTimeout(t); t = setTimeout(rynekResults, 180); };
+  $('#rq').addEventListener('input', e => { R.q = e.target.value; go(); });
+  $('#rmin').addEventListener('input', e => { R.min = +e.target.value || 0; go(); });
+  $('#rsort').addEventListener('change', e => { R.sort = e.target.value; go(); });
+  loadCatalog().then(rynekResults).catch(e => { $('#rres').textContent = e.message; });
+}
+function searchCatalog(q, { kind = 'all', min = 0, sort = 'price', limit = 100 } = {}) {
+  const c = S.catalog, toks = q.toLowerCase().split(/\s+/).filter(Boolean);
+  let rows = c.p.filter(r => {
+    const k = c.kinds[r[2]];
+    if (kind === 'sealed' ? k === 'S' : kind !== 'all' && k !== kind) return false;
+    if ((r[4] || 0) < min) return false;
+    return toks.every(t => r.lc.includes(t));
+  });
+  const ch = r => pct(r[4], r[8]) ?? 0;
+  rows.sort(sort === 'up' ? (a, b) => ch(b) - ch(a) : sort === 'down' ? (a, b) => ch(a) - ch(b) : sort === 'name' ? (a, b) => a[1].localeCompare(b[1]) : (a, b) => (b[4] || 0) - (a[4] || 0));
+  return { rows: rows.slice(0, limit), total: rows.length };
+}
+function rynekResults() {
+  const box = $('#rres'); if (!box || !S.catalog) return;
+  const c = S.catalog, { rows, total } = searchCatalog(R.q, R);
+  box.innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:6px">${total.toLocaleString('pl-PL')} wyników${total > rows.length ? ` · pokazuję ${rows.length}` : ''} · ceny z ${dPL(c.day)}</div>
+  <div class="tblw"><table class="tbl"><tr><th>Produkt</th><th>Trend</th><th>vs śr. 30 dni</th><th>Śr. 7 dni</th><th>Najtaniej*</th></tr>
+  ${rows.map(r => { const ch = pct(r[4], r[8]); return `<tr class="click" data-act="detail" data-id="${r[0]}"><td class="name"><div class="nm">${esc(r[1])}<small>${esc([c.exp[r[3]], KIND[c.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td><b>${E(r[4])}</b></td><td class="${cls(ch)}">${arrow(ch)}${PC(ch)}</td><td>${E(r[7])}</td><td class="muted">${E(r[5])}</td></tr>`; }).join('') || '<tr><td colspan="5" class="empty">Nic nie znaleziono.</td></tr>'}
+  </table></div>`;
+}
+
+// ---------- Skaner zdjęć ----------
+// Zdjęcie → Claude Haiku 5.5 odczytuje nazwę i numer → TCGdex daje kartę i idProduct Cardmarketu → kolejka do zatwierdzenia → portfel.
+const AI_MODEL = 'claude-haiku-5-5', AI_PRICE = { in: 0.10, out: 0.50 };   // $ za 1 mln tokenów
+const AI_SDK = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.132.1/+esm';
+const SCAN_SYSTEM = `You identify Pokémon Trading Card Game cards in photos. List every card that is visible (a binder page can hold 9 or more; a photo may also show a single card).
+For each card read the text printed on the card itself:
+- name: the card name exactly as printed, including suffixes like "ex", "V", "VMAX", "GX" and possessive trainer names ("Erika's Oddish"). Japanese cards: write the name in Japanese as printed.
+- number: the collector number before the slash, as printed (e.g. "215", "025", "TG23", "SV107", "GG56"); promos without a slash: the promo number (e.g. "131", "SWSH020").
+- set_total: the number after the slash ("203"), or "" if there is none.
+- set_code: the small set or promo code printed near the number (e.g. "EVS", "M-P", "SVP"), or "".
+- language: "en" for English cards, "ja" for Japanese, otherwise "other".
+- variant: "reverse_holo" when the whole card frame except the artwork is foil, "holo" when only the artwork is foil, "normal" when there is no foil, "unknown" if you cannot tell.
+- position: where the card is in the photo in Polish (e.g. "lewy górny", "środek", "całe zdjęcie").
+- confidence: "high" only when you can clearly read both name and number.
+Skip card backs, sleeves without visible text, and non-card objects. If nothing is readable, return an empty list.`;
+const SCAN_SCHEMA = { type: 'object', additionalProperties: false, required: ['cards'], properties: { cards: { type: 'array', items: { type: 'object', additionalProperties: false,
+  required: ['name', 'number', 'set_total', 'set_code', 'language', 'variant', 'position', 'confidence'],
+  properties: { name: { type: 'string' }, number: { type: 'string' }, set_total: { type: 'string' }, set_code: { type: 'string' },
+    language: { type: 'string', enum: ['en', 'ja', 'other'] }, variant: { type: 'string', enum: ['normal', 'holo', 'reverse_holo', 'unknown'] },
+    position: { type: 'string' }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] } } } } } };
+const SC = { jobs: [], cost: 0, date: todayISO(), busy: 0 };
+let _ai = null;
+async function aiClient() {
+  const key = ls.get('skarbiec_ak');
+  if (!key) throw new Error('Brak klucza API Anthropic – wklej go w Ustawieniach (Skaner zdjęć).');
+  if (!_ai || _ai.key !== key) {
+    const { default: Anthropic } = await import(AI_SDK);
+    _ai = { key, c: new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true, ...(ls.get('skarbiec_ai_base') ? { baseURL: ls.get('skarbiec_ai_base') } : {}) }) };   // skarbiec_ai_base: tylko testy lokalne
+  }
+  return _ai.c;
+}
+function aiError(e) {
+  const s = e?.status, m = e?.error?.error?.message || e?.message || String(e);
+  if (s === 401) return 'Zły klucz API Anthropic.';
+  if (s === 400 && /credit|balance/i.test(m)) return 'Brak środków na koncie API Anthropic (console.anthropic.com → Billing).';
+  if (s === 429) return 'Za dużo zapytań naraz – spróbuj za minutę.';
+  if (s >= 500) return 'Serwery Anthropic są przeciążone – spróbuj ponownie.';
+  return m;
+}
+async function scaleImage(file, max, type, q) {
+  const bmp = await createImageBitmap(file);
+  const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * s); cv.height = Math.round(bmp.height * s);
+  cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height); bmp.close?.();
+  return new Promise((ok, no) => cv.toBlob(b => b ? ok(b) : no(new Error('Nie udało się przetworzyć zdjęcia.')), type, q));
+}
+
+// TCGdex – darmowe API z kartami; podaje m.in. idProduct Cardmarketu
+const TD = 'https://api.tcgdex.net/v2', tdCache = new Map();
+const td = path => { if (!tdCache.has(path)) tdCache.set(path, fetch(`${TD}/${path}`).then(r => r.ok ? r.json() : null).catch(() => { tdCache.delete(path); return null; })); return tdCache.get(path); };
+const normNo = s => String(s || '').toUpperCase().replace(/\s/g, '').replace(/^([A-Z]*)0+(?=\d)/, '$1');
+async function resolveCard(c) {
+  const lang = c.language === 'ja' ? 'ja' : 'en';
+  const sets = await td(`${lang}/sets`) || [], setById = new Map(sets.map(s => [s.id, s]));
+  const no = normNo(c.number), tot = parseInt(c.set_total, 10) || null, setOf = id => id.slice(0, id.lastIndexOf('-'));
+  const byName = async n => n ? await td(`${lang}/cards?name=${encodeURIComponent(n)}`) || [] : [];
+  let brief = await byName(c.name.trim());
+  if (!brief.length) { const w = c.name.split(/\s+/).sort((a, b) => b.length - a.length)[0]; if (w && w.length >= 3 && w !== c.name.trim()) brief = await byName(w); }
+  let cand = no ? brief.filter(b => normNo(b.localId) === no) : brief;
+  if (tot && cand.length > 1) { const f = cand.filter(b => setById.get(setOf(b.id))?.cardCount?.official === tot); if (f.length) cand = f; }
+  if (!cand.length && no && tot) {   // nazwa źle odczytana – szukamy po wielkości dodatku i numerze
+    for (const s of sets.filter(s => s.cardCount?.official === tot).slice(-6)) {
+      const hit = (await td(`${lang}/sets/${encodeURIComponent(s.id)}`))?.cards?.find(x => normNo(x.localId) === no);
+      if (hit) cand.push(hit);
+    }
+  }
+  const full = (await Promise.all(cand.slice(0, 8).map(b => td(`${lang}/cards/${encodeURIComponent(b.id)}`)))).filter(Boolean);
+  const out = full.map(f => ({
+    tid: f.id, name: f.name, set: f.set?.name || '', no: f.localId, total: f.set?.cardCount?.official, rarity: f.rarity || '',
+    img: f.image ? `${f.image}/low.webp` : null,
+    idp: +(f.pricing?.cardmarket?.idProduct || f.variants_detailed?.find(v => v.thirdParty?.cardmarket)?.thirdParty?.cardmarket || 0) || null,
+  })).sort((a, b) => (catRow(b.idp) ? 1 : 0) - (catRow(a.idp) ? 1 : 0));
+  // karty bez produktu na Cardmarket (np. TCG Pocket) odpadają, jeśli są inne kandydatury
+  return out.some(x => x.idp) ? out.filter(x => x.idp) : out;
+}
+function cmLink(id, fallbackName) {   // Cardmarket nie ma linku po idProduct – wyszukiwarka po nazwie (+ dodatek, jeśli strona go uwzględni)
+  const r = catRow(id), name = (r ? r[1] : fallbackName || '').replace(/\s*\[.*?\]\s*/g, ' ').replace(/\(V\.\d+\)/, '').trim();
+  return `https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=${encodeURIComponent(name)}${r?.[3] ? `&idExpansion=${r[3]}` : ''}`;
+}
+const scPrice = (card, holo) => { const r = catRow(card?.idp); return r ? (holo ? r[9] || r[4] : r[4]) : null; };
+
+async function scanJob(j) {
+  j.status = 'analiza'; scQueue();
+  try {
+    const api = await scaleImage(j.file, 1568, 'image/jpeg', 0.85);
+    const client = await aiClient();
+    const msg = await client.messages.create({
+      model: AI_MODEL, max_tokens: 4096, thinking: { type: 'disabled' }, system: SCAN_SYSTEM,
+      output_config: { format: { type: 'json_schema', schema: SCAN_SCHEMA } },
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64e(new Uint8Array(await api.arrayBuffer())) } },
+        { type: 'text', text: 'Rozpoznaj karty na tym zdjęciu.' }] }],
+    });
+    const cost = (msg.usage.input_tokens * AI_PRICE.in + msg.usage.output_tokens * AI_PRICE.out) / 1e6;
+    SC.cost += cost; j.cost = cost;
+    if (msg.stop_reason === 'refusal') throw new Error('Model odmówił analizy tego zdjęcia.');
+    if (msg.stop_reason === 'max_tokens') throw new Error('Za dużo kart na jednym zdjęciu – podziel je na mniejsze.');
+    const out = JSON.parse(msg.content.find(b => b.type === 'text')?.text || '{"cards":[]}');
+    j.status = 'dopasowanie'; scQueue();
+    try { await loadCatalog(); } catch {}
+    j.cards = await Promise.all((out.cards || []).map(async det => {
+      const cands = await resolveCard(det);
+      return { det, cands, sel: cands.length ? 0 : -1, holo: det.variant === 'reverse_holo', qty: 1, cost: '', on: cands.length === 1 && !!cands[0].idp && det.confidence === 'high' };
+    }));
+    j.status = 'gotowe';
+  } catch (e) { j.status = 'błąd'; j.err = aiError(e); }
+  scQueue();
+  if (j.status === 'gotowe') savePhoto(j);
+}
+async function savePhoto(j) {   // każde zrobione zdjęcie trafia do prywatnego repo, niezależnie od tego, co z niego dodasz
+  if (S.readOnly || !GH.token || j.photo) return;
+  try {
+    let blob = await scaleImage(j.file, 2000, 'image/webp', 0.82);
+    if (blob.type !== 'image/webp') blob = await scaleImage(j.file, 2000, 'image/jpeg', 0.85);   // Safari bez WebP
+    const d = todayISO(), path = `foto/${d.slice(0, 4)}/${d.slice(5, 7)}/${d}-${uid()}.${blob.type === 'image/webp' ? 'webp' : 'jpg'}`;
+    await PHOTOS.put(path, blob, `foto: ${j.cards.length} kart`);
+    j.photo = path; j.photoErr = null;
+    PHOTOS.urls.set(path, Promise.resolve(j.url));
+  } catch (e) { j.photoErr = /40[34]/.test(e.message) ? `Brak dostępu do ${PHOTOS.repo} – dodaj to repozytorium do tokenu GitHub.` : e.message; }
+  scQueue();
+}
+function scPump() {
+  for (const j of SC.jobs) { if (SC.busy >= 2) break; if (j.status === 'czeka') { SC.busy++; scanJob(j).finally(() => { SC.busy--; scPump(); }); } }
+}
+function scAdd(files) {
+  for (const f of files) if (/^image\//.test(f.type) || /\.(heic|jpe?g|png|webp)$/i.test(f.name)) SC.jobs.push({ id: uid(), file: f, url: URL.createObjectURL(f), status: 'czeka', cards: [] });
+  scQueue(); scPump();
+}
+const scSelected = () => SC.jobs.flatMap(j => j.cards.filter(c => c.on && c.cands[c.sel]).map(c => ({ j, c, card: c.cands[c.sel] })));
+
+function vSkaner(v) {
+  const ready = !!ls.get('skarbiec_ak');
+  v.innerHTML = `
+  <h1>Skaner kart</h1><p class="sub">Zrób zdjęcie karty albo całej strony segregatora. Claude Haiku odczyta nazwę i numer, a TCGdex dopasuje kartę z Cardmarketu. Ty zatwierdzasz, co trafia do portfela.</p>
+  ${!ready ? `<div class="banner" style="margin-bottom:12px">🔑 Najpierw wklej klucz API Anthropic w <a href="#" data-act="tab" data-id="ustawienia">Ustawieniach</a>. Koszt to ok. 0,1 grosza za zdjęcie.</div>` : ''}
+  ${S.readOnly ? `<div class="banner" style="margin-bottom:12px">🔒 Tryb tylko do odczytu – rozpoznawanie działa, ale zdjęć i kart nie zapiszę bez tokenu GitHub.</div>` : ''}
+  <div class="card">
+    <div class="drop" id="sc-drop">
+      <div class="row" style="justify-content:center">
+        <label class="btn primary">📷 Zrób zdjęcie<input type="file" accept="image/*" capture="environment" class="hide" id="sc-cam"></label>
+        <label class="btn">🖼️ Wybierz zdjęcia<input type="file" accept="image/*" multiple class="hide" id="sc-files"></label>
+      </div>
+      <p style="margin:10px 0 0;font-size:13px">albo przeciągnij tu pliki · wiele zdjęć naraz · 9 kart z segregatora w jednym zdjęciu to jedno zapytanie</p>
+    </div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Zdjęcia zapisuję w prywatnym repozytorium <b>${esc(PHOTOS.repo || '—')}</b>. Klucz API zostaje w tej przeglądarce i trafia tylko do Anthropic.</p>
+  </div>
+  <div class="card" style="margin-top:12px" id="sc-q"></div>
+  <div class="card" style="margin-top:12px" id="sc-gal"></div>`;
+  $('#sc-cam').addEventListener('change', e => { scAdd(e.target.files); e.target.value = ''; });
+  $('#sc-files').addEventListener('change', e => { scAdd(e.target.files); e.target.value = ''; });
+  const dz = $('#sc-drop');
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+  dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('over'); scAdd(e.dataTransfer.files); });
+  const q = $('#sc-q');
+  q.addEventListener('change', e => {
+    const t = e.target, j = SC.jobs.find(x => x.id === t.dataset.j), c = j?.cards[+t.dataset.c];
+    if (t.id === 'sc-date') { SC.date = t.value || todayISO(); return; }
+    if (!c) return;
+    if (t.dataset.f === 'on') c.on = t.checked;
+    if (t.dataset.f === 'sel') { c.sel = +t.value; c.on = c.sel >= 0; }
+    if (t.dataset.f === 'holo') c.holo = t.checked;
+    if (t.dataset.f === 'qty') c.qty = Math.max(1, +t.value || 1);
+    if (t.dataset.f === 'cost') c.cost = t.value;
+    scQueue();
+  });
+  scQueue(); scGallery();
+}
+function scQueue() {
+  const q = $('#sc-q'); if (!q || S.tab !== 'skaner') return;
+  if (!SC.jobs.length) { q.innerHTML = '<div class="empty">Kolejka jest pusta. Dodaj zdjęcia powyżej.</div>'; return; }
+  const sel = scSelected(), fx = fxNow();
+  const all = SC.jobs.flatMap(j => j.cards.filter(c => c.cands[c.sel]).map(c => (scPrice(c.cands[c.sel], c.holo) || 0) * c.qty));
+  const STAT = { czeka: '<span class="muted">czeka…</span>', analiza: '<span class="spin"></span> Claude czyta zdjęcie…', dopasowanie: '<span class="spin"></span> szukam w TCGdex…' };
+  q.innerHTML = `
+  <div class="spread"><div><h2 style="margin:0">Do zatwierdzenia</h2><div class="muted" style="font-size:12px">${SC.jobs.length} zdjęć · rozpoznane karty warte razem ${E(all.reduce((a, b) => a + b, 0))} (≈ ${P(all.reduce((a, b) => a + b, 0) * fx)}) · koszt API w tej sesji ≈ ${SC.cost.toFixed(4).replace('.', ',')} $</div></div>
+    <div class="row"><label class="row muted" style="font-size:13px">data zakupu <input type="date" id="sc-date" value="${SC.date}" max="${todayISO()}"></label>
+    <button class="btn sm" data-act="scClear">Wyczyść gotowe</button><button class="btn primary" data-act="scApprove" ${sel.length ? '' : 'disabled'}>Dodaj do portfela (${sel.length})</button></div></div>
+  ${SC.jobs.map(j => `<div class="job"><img src="${j.url}" alt="">
+    <div style="min-width:0">
+      <div class="spread"><div style="font-size:13px">${STAT[j.status] || (j.status === 'błąd' ? `<span class="down">${esc(j.err)}</span>` : `${j.cards.length ? `${j.cards.length} kart` : 'Nie znalazłem kart na zdjęciu.'}${j.cost ? ` · ${(j.cost * 100).toFixed(3).replace('.', ',')} ¢` : ''}`)}
+        ${j.photo ? ' · <span class="up">📁 zapisane</span>' : j.photoErr ? ` · <span class="down">${esc(j.photoErr)}</span>` : ''}</div>
+        <div class="row">${j.status === 'błąd' ? `<button class="btn sm" data-act="scRetry" data-j="${j.id}">Ponów</button>` : ''}${j.status === 'gotowe' && !j.photo && !S.readOnly ? `<button class="btn sm" data-act="scPhoto" data-j="${j.id}">Zapisz zdjęcie</button>` : ''}<button class="btn sm" data-act="scDrop" data-j="${j.id}" title="Usuń z kolejki">×</button></div></div>
+      ${j.cards.map((c, i) => { const k = c.cands[c.sel], pr = scPrice(k, c.holo); return `<div class="sc-card">
+        <input type="checkbox" data-j="${j.id}" data-c="${i}" data-f="on" ${c.on ? 'checked' : ''} ${k ? '' : 'disabled'} aria-label="Dodaj">
+        ${k?.img ? `<img src="${esc(k.img)}" alt="" loading="lazy">` : '<span></span>'}
+        <div style="min-width:0"><div class="nm">${esc(k ? k.name : c.det.name || '?')} <span class="muted" style="font-weight:400">${esc(k ? `${k.no}/${k.total ?? '?'}` : `${c.det.number}/${c.det.set_total}`)}</span>
+          ${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
+          <small>${esc(k ? [k.set, k.rarity].filter(Boolean).join(' · ') : 'nie dopasowano – ' + [c.det.set_code, c.det.language].filter(Boolean).join(' '))} · ${esc(c.det.position)}${pr ? ` · trend <b>${E(pr)}</b>` : ''}${k?.idp ? ` · <a href="${cmLink(k.idp, k.name)}" target="_blank" rel="noopener">Cardmarket ↗</a>` : ''}</small></div></div>
+        <div class="ctl">
+          ${c.cands.length > 1 ? `<select data-j="${j.id}" data-c="${i}" data-f="sel" aria-label="Wariant">${c.cands.map((x, n) => `<option value="${n}" ${n === c.sel ? 'selected' : ''}>${esc(`${x.name} · ${x.set} ${x.no}`)}</option>`).join('')}<option value="-1" ${c.sel < 0 ? 'selected' : ''}>żadna z tych</option></select>` : ''}
+          ${k && catRow(k.idp)?.[9] ? `<label class="row" style="font-size:12px"><input type="checkbox" data-j="${j.id}" data-c="${i}" data-f="holo" ${c.holo ? 'checked' : ''}> Reverse Holo</label>` : ''}
+          <label class="row" style="font-size:12px">szt. <input type="number" min="1" value="${c.qty}" data-j="${j.id}" data-c="${i}" data-f="qty"></label>
+          <label class="row" style="font-size:12px">koszt zł <input type="number" min="0" step="0.01" value="${esc(c.cost)}" placeholder="0" data-j="${j.id}" data-c="${i}" data-f="cost"></label>
+          ${!k ? `<button class="btn sm" data-act="scManual" data-j="${j.id}" data-c="${i}">Wybierz ręcznie</button>` : ''}
+        </div></div>`; }).join('')}
+    </div></div>`).join('')}`;
+}
+async function scGallery() {
+  const g = $('#sc-gal'); if (!g) return;
+  const list = (S.vault.scans || []).slice(-30).reverse();
+  g.innerHTML = `<h2>Zapisane zdjęcia</h2>${list.length ? `<div class="phgrid">${list.map(s => `<button class="ph" data-act="photo" data-path="${esc(s.path)}"><img alt="" data-src="${esc(s.path)}"><span>${dPL(s.date)} · ${s.n} kart</span></button>`).join('')}</div>` : '<div class="empty">Tu pojawią się zdjęcia z zatwierdzonych skanów.</div>'}`;
+  for (const im of g.querySelectorAll('img[data-src]')) PHOTOS.url(im.dataset.src).then(u => { im.src = u; }).catch(() => { im.alt = '⚠'; });
+}
+async function scApprove() {
+  const sel = scSelected(); if (!sel.length) return;
+  for (const j of new Set(sel.map(x => x.j))) if (!j.photo) await savePhoto(j);
+  const recs = sel.map(({ j, c, card }) => {
+    const r = catRow(card.idp);
+    return { uid: uid(), id: card.idp, holo: !!c.holo, name: r ? r[1] : card.name, set: (r && S.catalog.exp[r[3]]) || card.set, kind: 'S',
+      qty: c.qty, date: SC.date, cost_pln: +(+c.cost || 0).toFixed(2), note: `${card.set} ${card.no}`.trim(), sold: null, tcgdex: card.tid, ...(j.photo ? { photos: [j.photo] } : {}) };
+  });
+  const scans = new Map();
+  for (const { j } of sel) if (j.photo) scans.set(j.photo, { path: j.photo, date: todayISO(), n: j.cards.length });
+  S.vault.portfolio = [...(S.vault.portfolio || []), ...recs];
+  S.vault.scans = [...(S.vault.scans || []).filter(s => !scans.has(s.path)), ...scans.values()].slice(-500);
+  if (await saveVault(`skaner: +${recs.length} kart`)) {
+    sel.forEach(({ c }) => { c.on = false; c.added = true; });
+    SC.jobs = SC.jobs.filter(j => j.cards.some(c => !c.added && c.cands.length) || j.status !== 'gotowe');
+    toast(`Dodano ${recs.length} kart do portfela ✓`);
+  }
+  render();
+}
+function openPhotos(paths, title = 'Zdjęcie') {
+  modal(title, paths.map(p => `<img data-src="${esc(p)}" alt="" style="width:100%;border-radius:8px;margin-bottom:8px;background:var(--surface-2);min-height:120px">`).join('') + `<p class="muted" style="font-size:12px">${paths.map(esc).join('<br>')}</p>`, d => {
+    for (const im of d.querySelectorAll('img[data-src]')) PHOTOS.url(im.dataset.src).then(u => { im.src = u; }).catch(e => { im.replaceWith(Object.assign(document.createElement('div'), { className: 'banner', textContent: 'Nie udało się wczytać zdjęcia: ' + e.message })); });
+  });
+}
+window.addEventListener('beforeunload', e => { if (SC.jobs.some(j => j.cards.some(c => c.on && !c.added))) { e.preventDefault(); e.returnValue = ''; } });
+
+// ---------- Alerty ----------
+function vAlerty(v) {
+  const list = (S.market?.alerts || []).slice().reverse();
+  v.innerHTML = `<h1>Alerty</h1><p class="sub">Wszystko, co bot wysłał na Discord (ostatnie 400).</p><div class="card">${alertList(list)}</div>`;
+}
+
+// ---------- Ustawienia ----------
+function vUstawienia(v) {
+  const st = { ...DEFAULT_SETTINGS, ...(S.vault.settings || {}) };
+  v.innerHTML = `
+  <h1>Ustawienia</h1><p class="sub">Połączenie z GitHubem, alerty i kopia zapasowa.</p>
+  <div class="grid g2">
+  <div class="card stack"><h2>GitHub (zapisywanie zmian)</h2>
+    <p class="muted" style="margin:0">Token jest zapisany tylko w tej przeglądarce. Strona używa go do zapisu twojego zaszyfrowanego skarbca i do uruchamiania bota.</p>
+    <label class="f">Repozytorium (właściciel/nazwa)<input type="text" id="s-repo" value="${esc(GH.repo)}" placeholder="login/skarbiec"></label>
+    <label class="f">Token (fine-grained, uprawnienia: Contents + Actions: Read and write)<input type="password" id="s-token" value="${esc(GH.token)}" placeholder="github_pat_…" autocomplete="off"></label>
+    <div class="row"><button class="btn primary" data-act="savegh">Zapisz i sprawdź</button><span id="s-ghres" class="muted"></span></div>
+  </div>
+  <div class="card stack"><h2>Bot i Discord</h2>
+    <p class="muted" style="margin:0">Bot sprawdza ceny codziennie rano. Możesz go też uruchomić teraz (dane pojawią się na stronie po ok. 2 minutach).</p>
+    <div class="row"><button class="btn" data-act="runbot">▶ Uruchom bota teraz</button><button class="btn" data-act="testdc">Wyślij test na Discord</button></div>
+    <p class="muted" style="margin:0;font-size:12px">Ostatni pomiar: ${S.meta?.updated ? new Date(S.meta.updated).toLocaleString('pl-PL') : 'jeszcze nie było'}.</p>
+  </div>
+  <div class="card stack"><h2>Skaner zdjęć</h2>
+    <p class="muted" style="margin:0">Klucz API Anthropic (<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>) zostaje tylko w tej przeglądarce. Ustaw tam miesięczny limit wydatków, np. 5 $. Model: Claude Haiku 5.5, ok. 0,1 grosza za zdjęcie.</p>
+    <label class="f">Klucz API Anthropic<input type="password" id="s-ak" value="${esc(ls.get('skarbiec_ak') || '')}" placeholder="sk-ant-…" autocomplete="off"></label>
+    <label class="f">Prywatne repozytorium na zdjęcia<input type="text" id="s-prepo" value="${esc(PHOTOS.repo)}" placeholder="login/skarbiec-foto"></label>
+    <div class="row"><button class="btn primary" data-act="saveai">Zapisz i sprawdź</button><span id="s-aires" class="muted"></span></div>
+  </div>
+  <div class="card stack"><h2>Kiedy wysyłać alerty</h2>
+    <div class="grid g2" style="gap:10px">
+      <label class="f">Lista straciła w 7 dni co najmniej (%)<input type="number" id="s-drop" value="${st.drop_alert_pct}" min="1"></label>
+      <label class="f">Pozycja spadła w 1 dzień co najmniej (%)<input type="number" id="s-card" value="${st.card_drop_alert_pct}" min="1"></label>
+      <label class="f">Pozycja poniżej szczytu z 90 dni o (%)<input type="number" id="s-dip" value="${st.dip_alert_pct}" min="1"></label>
+      <label class="f">Zysk w portfelu – progi (%)<input type="text" id="s-profit" value="${esc(st.profit_steps.join(', '))}"></label>
+      <label class="f">Podsumowanie tygodnia<select id="s-sumday">${['poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota', 'niedziela'].map((d, i) => `<option value="${i}" ${+st.summary_weekday === i && st.weekly_summary ? 'selected' : ''}>${d}</option>`).join('')}<option value="-1" ${!st.weekly_summary ? 'selected' : ''}>wyłączone</option></select></label>
+    </div>
+    <div><button class="btn primary" data-act="savesettings">Zapisz</button></div>
+  </div>
+  <div class="card stack"><h2>Kopia zapasowa i konto</h2>
+    <p class="muted" style="margin:0">Kopia to twoje watchlisty i portfel w zwykłym JSON (niezaszyfrowane – trzymaj je u siebie).</p>
+    <div class="row"><button class="btn" data-act="backup">Pobierz kopię</button><label class="btn">Wczytaj kopię<input type="file" id="s-restore" accept=".json" class="hide"></label></div>
+    <div class="row"><button class="btn" data-act="logout">Wyloguj</button><button class="btn danger" data-act="forget">Zapomnij to urządzenie</button></div>
+  </div></div>`;
+  $('#s-restore').addEventListener('change', async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { const o = JSON.parse(await f.text()); if (!Array.isArray(o.watchlists) || !Array.isArray(o.portfolio)) throw new Error('To nie jest kopia Skarbca.');
+      if (!confirm(`Zastąpić obecne dane kopią (${o.watchlists.length} list, ${o.portfolio.length} pozycji portfela)?`)) return;
+      S.vault = o; await saveVault('skarbiec: przywrócono kopię'); render(); } catch (err) { toast(err.message, 4000); }
+  });
+}
+
+// ============================================================
+//   OKNA (szczegóły, dodawanie, edycja)
+// ============================================================
+function modal(title, body, onMount) {
+  const d = document.createElement('dialog');
+  d.innerHTML = `<div class="dlg-h"><h2>${esc(title)}</h2><button class="x" aria-label="Zamknij" data-close>×</button></div><div class="dlg-b">${body}</div>`;
+  document.body.appendChild(d);
+  d.addEventListener('close', () => { (d._charts || []).forEach(c => c.destroy()); d.remove(); });
+  d.addEventListener('click', e => { if (e.target === d || e.target.closest('[data-close]')) d.close(); });
+  d.showModal();
+  onMount && onMount(d);
+  return d;
+}
+function modalChart(d, canvas, labels, sets, opts) { const before = S.charts.length; lineChart(canvas, labels, sets, opts); d._charts = (d._charts || []).concat(S.charts.splice(before)); }
+
+async function openDetail(id, holo) {
+  try { await loadCatalog(); } catch {}
+  const r = catRow(id), it = { id: +id, holo: !!holo };
+  const m = itemMeta(it), p = nowPrice(it) || {}, k = keyOf(it), h = hist(k);
+  const c = S.catalog;
+  const cmUrl = cmLink(id, m.name);
+  const inWl = (S.vault.watchlists || []).filter(w => (w.items || []).some(x => keyOf(x) === k)).map(w => w.name);
+  const held = (S.vault.portfolio || []).filter(x => !x.sold && keyOf(x) === k).reduce((a, x) => a + (x.qty || 1), 0);
+  modal(m.name, `
+    <div class="muted" style="margin-top:-8px;margin-bottom:12px">${esc([m.set, KIND[m.kind]].filter(Boolean).join(' · '))} · produkt #${id}${inWl.length ? ` · na liście: ${esc(inWl.join(', '))}` : ''}${held ? ` · w portfelu: ${held} szt.` : ''}</div>
+    <div class="grid g2" style="gap:16px">
+      <dl class="kv">
+        <dt>Trend</dt><dd>${E(p.trend)}</dd><dt>Średnia 1 dzień</dt><dd>${E(p.avg1)}</dd><dt>Średnia 7 dni</dt><dd>${E(p.avg7)}</dd><dt>Średnia 30 dni</dt><dd>${E(p.avg30)}</dd>
+        <dt>Najtańsza oferta*</dt><dd>${E(p.low)}</dd><dt>Trend vs 30 dni</dt><dd class="${cls(pct(p.trend, p.avg30))}">${PC(pct(p.trend, p.avg30))}</dd>
+        <dt>W złotówkach</dt><dd>${P(p.trend * fxNow())}</dd>
+        ${!holo && r && r[9] ? `<dt>Reverse Holo – trend</dt><dd>${E(r[9])}</dd>` : ''}
+      </dl>
+      <div class="stack"><button class="btn primary" data-act="d-watch">+ Do watchlisty</button><button class="btn" data-act="d-port">+ Do portfela</button>
+        ${!holo && r && r[9] ? '<button class="btn" data-act="d-holo">Pokaż wersję Reverse Holo</button>' : ''}
+        <a class="btn" style="text-align:center;text-decoration:none" href="${cmUrl}" target="_blank" rel="noopener">Otwórz na Cardmarket ↗</a></div>
+    </div>
+    <h3 style="margin-top:18px">Historia ceny</h3><div id="d-hist"><span class="spin"></span> Ładuję…</div>
+    <p class="muted" style="font-size:12px">* w dowolnym języku i stanie.</p>`, async d => {
+    d.addEventListener('click', e => {
+      const a = e.target.closest('[data-act]'); if (!a) return;
+      if (a.dataset.act === 'd-watch') { e.stopPropagation(); d.close(); formAddWatch(it); }
+      if (a.dataset.act === 'd-port') { e.stopPropagation(); d.close(); formHolding({ id: +id, holo: !!holo }); }
+      if (a.dataset.act === 'd-holo') { e.stopPropagation(); d.close(); openDetail(id, true); }
+    }, true);
+    const box = $('#d-hist', d);
+    let labels = [], data = [], note = '';
+    if (h.length >= 2) { labels = h.map(x => x[0]); data = h.map(x => x[1]); note = 'Dzienna historia trendu zapisywana przez bota.'; }
+    else if (!holo) {
+      try {
+        const days = (await fetchPublic('snap/index.json') || []).slice(-90);
+        const snaps = await Promise.all(days.map(dd => fetch(`snap/${dd}.json`).then(x => x.ok ? x.json() : null).catch(() => null)));
+        days.forEach((dd, i) => { const v = snaps[i]?.[id]; if (v != null) { labels.push(dd); data.push(v); } });
+        note = `Dzienne zrzuty rynku (produkty od ${S.meta?.snap_min_eur ?? 10} €), maks. 90 dni.`;
+      } catch {}
+    }
+    if (labels.length >= 2) { box.innerHTML = `<p class="muted" style="font-size:12px;margin:0 0 6px">${note}</p><div class="chart sm"><canvas></canvas></div>`; modalChart(d, $('canvas', box), labels, [{ label: 'Trend', data, color: css('--s1') }]); }
+    else box.innerHTML = `<div class="banner">Brak historii dla tego produktu. Średnie 1/7/30 dni obok pokazują kierunek. Gdy dodasz go do watchlisty lub portfela, bot zacznie zapisywać codzienną historię.</div>`;
+  });
+}
+
+function pickerHTML() { return `<input type="search" id="pk-q" placeholder="Wpisz nazwę karty, dodatku albo produktu sealed…" style="width:100%"><div class="chips" style="margin:8px 0" id="pk-k">${[['all', 'Wszystko'], ['S', 'Karty'], ['sealed', 'Sealed']].map(([k, l], i) => `<button class="chip" data-k="${k}" aria-pressed="${i === 0}">${l}</button>`).join('')}</div><div id="pk-res" class="tblw"><span class="spin"></span> Ładuję katalog…</div>`; }
+function mountPicker(d, onPick) {
+  let kind = 'all';
+  const run = () => {
+    if (!S.catalog) return;
+    const q = $('#pk-q', d).value.trim(), res = $('#pk-res', d);
+    if (q.length < 2) { res.innerHTML = '<p class="muted">Wpisz co najmniej 2 znaki.</p>'; return; }
+    const { rows, total } = searchCatalog(q, { kind, sort: 'price', limit: 40 });
+    res.innerHTML = `<table class="tbl"><tr><th>Produkt</th><th>Trend</th><th></th></tr>${rows.map(r => `<tr><td class="name"><div class="nm">${esc(r[1])}<small>${esc([S.catalog.exp[r[3]], KIND[S.catalog.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td>${E(r[4])}</td><td><button class="btn sm primary" data-pick="${r[0]}">Wybierz</button>${r[9] ? ` <button class="btn sm" data-pick="${r[0]}" data-holo="1" title="Wersja Reverse Holo">RH</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Nic nie znaleziono.</td></tr>'}</table>${total > rows.length ? `<p class="muted" style="font-size:12px">Pokazuję ${rows.length} z ${total} – doprecyzuj wyszukiwanie.</p>` : ''}`;
+  };
+  $('#pk-q', d).addEventListener('input', run);
+  $('#pk-k', d).addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (!b) return; kind = b.dataset.k; $('#pk-k', d).querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c === b)); run(); });
+  $('#pk-res', d).addEventListener('click', e => { const b = e.target.closest('[data-pick]'); if (b) onPick({ id: +b.dataset.pick, holo: !!b.dataset.holo }); });
+  loadCatalog().then(() => { run(); $('#pk-q', d).focus(); }).catch(e => { $('#pk-res', d).textContent = e.message; });
+}
+function snapshotMeta(it) { const r = catRow(it.id); return r ? { name: r[1], set: S.catalog.exp[r[3]] || '', kind: S.catalog.kinds[r[2]] } : {}; }
+
+function formAddWatch(it) {
+  const wls = S.vault.watchlists || [];
+  const p = nowPrice(it), m = itemMeta(it);
+  modal('Dodaj do watchlisty', `<p style="margin-top:0"><b>${esc(m.name)}</b><br><span class="muted">${esc(m.set)} · trend ${E(p?.trend)}</span></p>
+    <div class="grid g2" style="gap:10px">
+      <label class="f">Lista<select id="aw-l">${wls.map(w => `<option value="${esc(w.id)}" ${w.id === S.wl ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}<option value="__new">+ nowa lista…</option></select></label>
+      <label class="f">Nazwa nowej listy<input type="text" id="aw-n" placeholder="np. Sealed do kupienia"></label>
+      <label class="f">Ilość (do sumy listy)<input type="number" id="aw-q" value="1" min="1"></label>
+      <label class="f">Kup poniżej (€, opcjonalnie)<input type="number" id="aw-b" step="0.01" min="0" placeholder="${p?.trend ? (p.trend * 0.8).toFixed(0) : ''}"></label>
+    </div><div class="row" style="margin-top:14px"><button class="btn primary" id="aw-ok">Dodaj</button><button class="btn" data-close>Anuluj</button></div>`, d => {
+    const toggle = () => { $('#aw-n', d).closest('label').style.display = $('#aw-l', d).value === '__new' ? '' : 'none'; };
+    $('#aw-l', d).addEventListener('change', toggle); toggle();
+    $('#aw-ok', d).onclick = async () => {
+      let wl;
+      if ($('#aw-l', d).value === '__new') { const n = $('#aw-n', d).value.trim(); if (!n) return toast('Podaj nazwę listy.'); wl = { id: uid(), name: n, items: [] }; S.vault.watchlists = [...wls, wl]; }
+      else wl = wls.find(w => w.id === $('#aw-l', d).value);
+      if ((wl.items || []).some(x => keyOf(x) === keyOf(it))) return toast('Ta pozycja już jest na tej liście.');
+      const bb = parseFloat($('#aw-b', d).value);
+      wl.items = [...(wl.items || []), { id: it.id, holo: !!it.holo, ...snapshotMeta(it), qty: Math.max(1, +$('#aw-q', d).value || 1), ...(bb > 0 ? { buy_below: bb } : {}) }];
+      S.wl = wl.id; d.close(); await saveVault(`watchlista: +${m.name}`); render();
+    };
+  });
+}
+
+function formHolding(base, existing) {
+  const it = existing || base, m = itemMeta(it), p = nowPrice(it);
+  const curCost = existing ? existing.cost_pln : '';
+  modal(existing ? 'Edytuj pozycję' : 'Dodaj do portfela', `<p style="margin-top:0"><b>${esc(m.name)}</b><br><span class="muted">${esc(m.set)} · trend ${E(p?.trend)} (≈ ${P(p?.trend * fxNow())})</span></p>
+    <div class="grid g2" style="gap:10px">
+      <label class="f">Ilość<input type="number" id="h-q" value="${existing?.qty || 1}" min="1"></label>
+      <label class="f">Data zakupu<input type="date" id="h-d" value="${existing?.date || todayISO()}" max="${todayISO()}"></label>
+      <label class="f">Łączny koszt zakupu (z wysyłką)<input type="number" id="h-c" step="0.01" min="0" value="${curCost}"></label>
+      <label class="f">Waluta<select id="h-cur"><option value="PLN">PLN</option><option value="EUR">EUR (przeliczę po kursie ${fxNow().toFixed(4).replace('.', ',')})</option></select></label>
+      <label class="f" style="grid-column:1/-1">Notatka (np. gdzie kupione, stan, PSA)<input type="text" id="h-n" value="${esc(existing?.note || '')}"></label>
+    </div>
+    ${existing?.sold ? `<div class="banner" style="margin-top:10px">Sprzedane ${dPL(existing.sold.date)} za ${P(existing.sold.price_pln)}. <button class="btn sm" id="h-unsell">Cofnij sprzedaż</button></div>` : ''}
+    <div class="spread" style="margin-top:14px"><div class="row"><button class="btn primary" id="h-ok">${existing ? 'Zapisz' : 'Dodaj'}</button><button class="btn" data-close>Anuluj</button></div>${existing ? '<button class="btn danger" id="h-del">Usuń</button>' : ''}</div>`, d => {
+    $('#h-ok', d).onclick = async () => {
+      let cost = parseFloat($('#h-c', d).value); if (!(cost >= 0)) return toast('Podaj koszt zakupu.');
+      if ($('#h-cur', d).value === 'EUR') cost = +(cost * fxNow()).toFixed(2);
+      const rec = existing || { uid: uid(), id: it.id, holo: !!it.holo, ...snapshotMeta(it), sold: null };
+      Object.assign(rec, { qty: Math.max(1, +$('#h-q', d).value || 1), date: $('#h-d', d).value || null, cost_pln: cost, note: $('#h-n', d).value.trim() });
+      if (!existing) S.vault.portfolio = [...(S.vault.portfolio || []), rec];
+      d.close(); await saveVault(`portfel: ${existing ? 'zmiana' : '+'} ${m.name}`); render();
+    };
+    if (existing) {
+      $('#h-del', d).onclick = async () => { if (!confirm('Usunąć tę pozycję z portfela?')) return; S.vault.portfolio = S.vault.portfolio.filter(x => x.uid !== existing.uid); d.close(); await saveVault('portfel: usunięto'); render(); };
+      const un = $('#h-unsell', d); if (un) un.onclick = async () => { existing.sold = null; d.close(); await saveVault('portfel: cofnięto sprzedaż'); render(); };
+    }
+  });
+}
+
+function formSell(h) {
+  const m = itemMeta(h), p = nowPrice(h), free = h.date ? taxFreeFrom(h.date) : null;
+  modal('Oznacz jako sprzedane', `<p style="margin-top:0"><b>${esc(m.name)}</b> · ${h.qty || 1} szt. · koszt ${P(h.cost_pln)}<br><span class="muted">wartość wg trendu ${P((p?.trend || 0) * (h.qty || 1) * fxNow())}</span></p>
+    <div class="grid g2" style="gap:10px"><label class="f">Za ile sprzedałeś (razem, PLN, po kosztach)<input type="number" id="s-p" step="0.01" min="0"></label><label class="f">Data sprzedaży<input type="date" id="s-d" value="${todayISO()}"></label></div>
+    ${free && todayISO() < free ? `<div class="banner" style="margin-top:10px">⚠️ Do ${dPL(free)} nie minęło pół roku od końca miesiąca zakupu. Sprzedaż przed tą datą jest przychodem do opodatkowania PIT (sprzedaż prywatna).</div>` : ''}
+    <div class="row" style="margin-top:14px"><button class="btn primary" id="s-ok">Zapisz sprzedaż</button><button class="btn" data-close>Anuluj</button></div>`, d => {
+    $('#s-ok', d).onclick = async () => { const pr = parseFloat($('#s-p', d).value); if (!(pr >= 0)) return toast('Podaj kwotę sprzedaży.'); h.sold = { date: $('#s-d', d).value || todayISO(), price_pln: pr }; d.close(); await saveVault('portfel: sprzedaż'); render(); };
+  });
+}
+
+function formWatchlist(wl) {
+  modal(wl ? 'Ustawienia listy' : 'Nowa watchlista', `<div class="grid g2" style="gap:10px">
+    <label class="f">Nazwa<input type="text" id="w-n" value="${esc(wl?.name || '')}" placeholder="np. Ascended Heroes SIR"></label>
+    <label class="f">Próg okazji – suma listy w € (opcjonalnie)<input type="number" id="w-t" step="1" min="0" value="${wl?.target_eur ?? ''}"></label>
+    <label class="f">Liczona wg<select id="w-m"><option value="trend">trendu (szybko reaguje)</option><option value="avg7" ${wl?.metric === 'avg7' ? 'selected' : ''}>średniej 7 dni (spokojniejsza)</option></select></label></div>
+    <div class="spread" style="margin-top:14px"><div class="row"><button class="btn primary" id="w-ok">${wl ? 'Zapisz' : 'Utwórz'}</button><button class="btn" data-close>Anuluj</button></div>${wl ? '<button class="btn danger" id="w-del">Usuń listę</button>' : ''}</div>`, d => {
+    $('#w-ok', d).onclick = async () => {
+      const n = $('#w-n', d).value.trim(); if (!n) return toast('Podaj nazwę.');
+      const t = parseFloat($('#w-t', d).value), rec = wl || { id: uid(), items: [] };
+      Object.assign(rec, { name: n, target_eur: t > 0 ? t : null, metric: $('#w-m', d).value });
+      if (!wl) S.vault.watchlists = [...(S.vault.watchlists || []), rec];
+      S.wl = rec.id; d.close(); await saveVault(`watchlista: ${n}`); render();
+    };
+    if (wl) $('#w-del', d).onclick = async () => { if (!confirm(`Usunąć listę „${wl.name}”?`)) return; S.vault.watchlists = S.vault.watchlists.filter(x => x.id !== wl.id); S.wl = null; d.close(); await saveVault('watchlista: usunięto'); render(); };
+  });
+}
+
+function formItem(wl, it) {
+  const m = itemMeta(it);
+  modal('Pozycja na liście', `<p style="margin-top:0"><b>${esc(m.name)}</b><br><span class="muted">${esc(wl.name)}</span></p>
+    <div class="grid g2" style="gap:10px"><label class="f">Ilość<input type="number" id="i-q" value="${it.qty || 1}" min="1"></label><label class="f">Kup poniżej (€)<input type="number" id="i-b" step="0.01" min="0" value="${it.buy_below ?? ''}"></label></div>
+    <div class="spread" style="margin-top:14px"><div class="row"><button class="btn primary" id="i-ok">Zapisz</button><button class="btn" data-close>Anuluj</button></div><button class="btn danger" id="i-del">Usuń z listy</button></div>`, d => {
+    $('#i-ok', d).onclick = async () => { it.qty = Math.max(1, +$('#i-q', d).value || 1); const b = parseFloat($('#i-b', d).value); if (b > 0) it.buy_below = b; else delete it.buy_below; d.close(); await saveVault('watchlista: zmiana pozycji'); render(); };
+    $('#i-del', d).onclick = async () => { wl.items = wl.items.filter(x => x !== it); d.close(); await saveVault('watchlista: usunięto pozycję'); render(); };
+  });
+}
+
+function formImport() {
+  modal('Import z Tampermonkey', `<p style="margin-top:0">Otwórz Wants Listę na Cardmarket z końcówką <code>#track</code>, kliknij <b>🤖 Konfiguracja dla bota</b> i wklej tutaj. Możesz wkleić też kilka list naraz (w nawiasach [ ]).</p>
+    <textarea id="im-t" rows="8" style="width:100%;font-family:ui-monospace,monospace;font-size:12px" placeholder='{"name": "...", "products": [123, 456], "target": 1500}'></textarea>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="im-ok">Importuj</button><button class="btn" data-close>Anuluj</button></div>`, d => {
+    $('#im-ok', d).onclick = async () => {
+      let data; try { data = JSON.parse($('#im-t', d).value); } catch { return toast('To nie jest poprawny JSON.'); }
+      try { await loadCatalog(); } catch {}
+      const lists = Array.isArray(data) ? data : data.watches || [data];
+      let n = 0;
+      for (const w of lists) {
+        if (!w || !Array.isArray(w.products)) continue;
+        const items = w.products.map(p => typeof p === 'object' ? { id: +p.id, holo: !!p.holo } : { id: +p, holo: false }).map(it => ({ ...it, ...snapshotMeta(it), qty: 1 }));
+        const ex = (S.vault.watchlists || []).find(x => x.name === w.name);
+        if (ex) { if (!confirm(`Lista „${w.name}” już istnieje. Zastąpić jej pozycje?`)) continue; ex.items = items; if (w.target) ex.target_eur = +w.target; S.wl = ex.id; }
+        else { const rec = { id: uid(), name: w.name || 'Lista z Cardmarket', items, target_eur: w.target ? +w.target : null, metric: 'trend' }; S.vault.watchlists = [...(S.vault.watchlists || []), rec]; S.wl = rec.id; }
+        n++;
+      }
+      if (!n) return toast('Nie znalazłem list do zaimportowania.');
+      d.close(); S.tab = 'watch'; await saveVault(`import ${n} list z Tampermonkey`); render();
+    };
+  });
+}
+
+// ============================================================
+//   AKCJE
+// ============================================================
+const ACT = {
+  tab: a => { S.tab = a.dataset.id; render(); window.scrollTo(0, 0); },
+  theme: () => { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const n = cur === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = n; ls.set('skarbiec_theme', n); render(); },
+  openwl: a => { S.wl = a.dataset.id; S.tab = 'watch'; render(); },
+  newwl: () => formWatchlist(null),
+  editwl: () => formWatchlist((S.vault.watchlists || []).find(w => w.id === S.wl)),
+  edititem: a => { const wl = S.vault.watchlists.find(w => w.id === S.wl); const it = wl.items.find(x => keyOf(x) === a.dataset.k); if (it) formItem(wl, it); },
+  exportwl: () => { const wl = S.vault.watchlists.find(w => w.id === S.wl); const txt = JSON.stringify({ name: wl.name, products: wl.items.map(i => i.holo ? { id: i.id, holo: true } : i.id), ...(wl.target_eur ? { target: wl.target_eur } : {}) }, null, 1); navigator.clipboard.writeText(txt).then(() => toast('Skopiowano JSON listy.'), () => prompt('Skopiuj:', txt)); },
+  importTM: () => formImport(),
+  detail: a => openDetail(+a.dataset.id, !!a.dataset.holo),
+  addto: a => modal(a.dataset.mode === 'portfel' ? 'Dodaj do portfela' : 'Dodaj do watchlisty', pickerHTML(), d => mountPicker(d, it => { d.close(); a.dataset.mode === 'portfel' ? formHolding(it) : formAddWatch(it); })),
+  sell: a => formSell(S.vault.portfolio.find(x => x.uid === a.dataset.uid)),
+  edithold: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); formHolding(h, h); },
+  rkind: a => { R.kind = a.dataset.k; document.querySelectorAll('[data-act="rkind"]').forEach(c => c.setAttribute('aria-pressed', c === a)); rynekResults(); },
+  savegh: async () => {
+    ls.set('skarbiec_repo', $('#s-repo').value.trim() || null); ls.set('skarbiec_token', $('#s-token').value.trim() || null); S.branch = null;
+    const out = $('#s-ghres'); out.innerHTML = '<span class="spin"></span>';
+    try { const f = await GH.getFile('docs/vault.enc'); if (!f) throw new Error('w repozytorium nie ma docs/vault.enc'); S.vaultSha = f.sha; S.readOnly = false; out.innerHTML = '<span class="up">✓ Połączono – zapisywanie włączone</span>'; shell(); S.tab = 'ustawienia'; render(); }
+    catch (e) { S.readOnly = true; out.innerHTML = `<span class="down">${esc(e.message)}</span>`; }
+  },
+  runbot: async () => { try { await GH.runBot(false); toast('Bot uruchomiony. Odśwież stronę za ok. 2–3 minuty.', 4000); } catch (e) { toast(e.message, 5000); } },
+  testdc: async () => { try { await GH.runBot(true); toast('Wysłano. Wiadomość na Discordzie za ok. 30–60 s.', 4000); } catch (e) { toast(e.message, 5000); } },
+  savesettings: async () => {
+    const day = +$('#s-sumday').value;
+    S.vault.settings = { ...DEFAULT_SETTINGS, ...(S.vault.settings || {}),
+      drop_alert_pct: +$('#s-drop').value || 10, card_drop_alert_pct: +$('#s-card').value || 25, dip_alert_pct: +$('#s-dip').value || 20,
+      profit_steps: $('#s-profit').value.split(/[,; ]+/).map(Number).filter(x => x > 0).sort((a, b) => a - b),
+      weekly_summary: day >= 0, summary_weekday: Math.max(0, day) };
+    await saveVault('ustawienia alertów');
+  },
+  backup: () => { const b = new Blob([JSON.stringify(S.vault, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `skarbiec-kopia-${todayISO()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); },
+  logout: () => { ls.set('skarbiec_pw', null); location.reload(); },
+  forget: () => { if (!confirm('Usunąć z tej przeglądarki zapamiętane hasło, token GitHub i klucz API?')) return; ['skarbiec_pw', 'skarbiec_token', 'skarbiec_repo', 'skarbiec_api', 'skarbiec_ak', 'skarbiec_photo_repo'].forEach(k => ls.set(k, null)); location.reload(); },
+  saveai: async () => {
+    ls.set('skarbiec_ak', $('#s-ak').value.trim() || null); ls.set('skarbiec_photo_repo', $('#s-prepo').value.trim() || null); PHOTOS.branch = null;
+    const out = $('#s-aires'), res = []; out.innerHTML = '<span class="spin"></span>';
+    try { await (await aiClient()).models.retrieve(AI_MODEL); res.push('<span class="up">✓ klucz API działa</span>'); }
+    catch (e) { res.push(`<span class="down">${esc(aiError(e))}</span>`); }
+    try { const r = await GH.call('', {}, PHOTOS.repo); res.push(r.private ? '<span class="up">✓ repo zdjęć (prywatne)</span>' : '<span class="down">⚠ repo zdjęć jest PUBLICZNE – zmień na prywatne</span>'); }
+    catch (e) { res.push(`<span class="down">repo zdjęć: ${esc(/ 404/.test(e.message) ? 'nie istnieje albo token nie ma do niego dostępu' : e.message)}</span>`); }
+    out.innerHTML = res.join(' · ');
+  },
+  scApprove: () => scApprove(),
+  scClear: () => { SC.jobs = SC.jobs.filter(j => !['gotowe', 'błąd'].includes(j.status)); scQueue(); },
+  scDrop: a => { SC.jobs = SC.jobs.filter(j => j.id !== a.dataset.j); scQueue(); },
+  scRetry: a => { const j = SC.jobs.find(x => x.id === a.dataset.j); if (j) { j.status = 'czeka'; j.err = null; scQueue(); scPump(); } },
+  scPhoto: a => { const j = SC.jobs.find(x => x.id === a.dataset.j); if (j) { j.photoErr = null; savePhoto(j); } },
+  scManual: a => {
+    const j = SC.jobs.find(x => x.id === a.dataset.j), c = j?.cards[+a.dataset.c]; if (!c) return;
+    modal('Wybierz kartę ręcznie', pickerHTML(), d => {
+      mountPicker(d, it => { const r = catRow(it.id); c.cands = [{ tid: null, name: r?.[1] || `#${it.id}`, set: S.catalog.exp[r?.[3]] || '', no: c.det.number, total: c.det.set_total, rarity: '', img: null, idp: it.id }]; c.sel = 0; c.holo = it.holo; c.on = true; d.close(); scQueue(); });
+      $('#pk-q', d).value = c.det.name;
+    });
+  },
+  photo: a => openPhotos([a.dataset.path]),
+  holdphotos: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.photos?.length) openPhotos(h.photos, itemMeta(h).name); },
+};
+document.addEventListener('click', e => {
+  const a = e.target.closest('[data-act]'); if (!a || !ACT[a.dataset.act]) return;
+  if (a.tagName === 'A') e.preventDefault();
+  ACT[a.dataset.act](a, e);
+});
+
+// ============================================================
+//   START: logowanie / zakładanie skarbca
+// ============================================================
+function loginScreen(err, setup) {
+  $('#app').innerHTML = `<div class="login"><form class="card stack" id="lf">
+    <div class="logo" style="font-size:20px"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="var(--accent)"/><rect x="9" y="6" width="14" height="20" rx="2" fill="none" stroke="#fff" stroke-width="2.4"/><path d="M12 19l3-3 2 2 3-4" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Skarbiec</div>
+    ${setup ? `<p style="margin:0">Pierwsze uruchomienie: załóż skarbiec. Hasło szyfruje twoje dane – <b>bez niego nie da się ich odczytać</b>, więc go nie zgub.</p>
+      <label class="f">Repozytorium<input type="text" id="l-repo" value="${esc(GH.repo)}" placeholder="login/skarbiec" required></label>
+      <label class="f">Token GitHub<input type="password" id="l-token" value="${esc(GH.token)}" placeholder="github_pat_…" required autocomplete="off"></label>
+      <label class="f">Nowe hasło (min. 10 znaków)<input type="password" id="l-pw" minlength="10" required autocomplete="new-password"></label>
+      <label class="f">Powtórz hasło<input type="password" id="l-pw2" minlength="10" required autocomplete="new-password"></label>`
+    : `<label class="f">Hasło<input type="password" id="l-pw" required autocomplete="current-password" autofocus></label>
+      <label class="row" style="font-size:13px;color:var(--ink-2)"><input type="checkbox" id="l-rem"> Zapamiętaj na tym urządzeniu (nie na cudzym komputerze)</label>`}
+    ${err ? `<div class="down" role="alert">${esc(err)}</div>` : ''}
+    <button class="btn primary" type="submit">${setup ? 'Załóż skarbiec' : 'Zaloguj'}</button>
+    <p class="muted" style="font-size:12px;margin:0">Dane są szyfrowane w przeglądarce (AES-256). Hasło nie jest nigdzie wysyłane.</p>
+  </form></div>`;
+  $('#lf').addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = $('button[type=submit]', e.target); btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Chwila…';
+    try {
+      if (setup) {
+        const pw = $('#l-pw').value; if (pw !== $('#l-pw2').value) throw new Error('Hasła się różnią.');
+        ls.set('skarbiec_repo', $('#l-repo').value.trim()); ls.set('skarbiec_token', $('#l-token').value.trim());
+        if (await GH.getFile('docs/vault.enc')) throw new Error('Skarbiec już istnieje w tym repozytorium – odśwież stronę i zaloguj się.');
+        const vault = { v: 1, settings: { ...DEFAULT_SETTINGS }, watchlists: [], portfolio: [], created: new Date().toISOString() };
+        const blob = await encryptBlob(vault, pw);
+        await GH.putFile('docs/vault.enc', JSON.stringify(blob), null, 'skarbiec: założono');
+        $('#app').innerHTML = `<div class="login"><div class="card stack"><h2>✓ Skarbiec założony</h2>
+          <p style="margin:0">Ostatni krok na GitHubie: <b>Settings → Secrets and variables → Actions → New repository secret</b></p>
+          <p style="margin:0">Nazwa: <code>SKARBIEC_PASSWORD</code>, wartość: <b>to samo hasło</b>. Bez tego bot nie odczyta twoich list.</p>
+          <p style="margin:0">Potem odśwież tę stronę i zaloguj się.</p><button class="btn primary" onclick="location.reload()">Odśwież</button></div></div>`;
+        return;
+      }
+      await unlock($('#l-pw').value, $('#l-rem').checked);
+    } catch (err) { loginScreen(err.message, setup); }
+  });
+}
+
+async function unlock(pw, remember) {
+  let blob = null;
+  S.readOnly = true;
+  if (GH.token && GH.repo) {
+    try { const f = await GH.getFile('docs/vault.enc'); if (f) { blob = JSON.parse(f.text); S.vaultSha = f.sha; S.readOnly = false; } }
+    catch (e) { console.warn('GitHub API:', e.message); }
+  }
+  if (!blob) blob = await fetchPublic('vault.enc');
+  if (!blob) throw new Error('Nie znalazłem skarbca.');
+  try { const r = await decryptBlob(blob, pw); S.vault = r.obj; S.vaultSalt = r.salt; }
+  catch { ls.set('skarbiec_pw', null); throw new Error('Złe hasło.'); }
+  S.vault.watchlists ||= []; S.vault.portfolio ||= [];
+  S.vaultSaved = JSON.stringify(S.vault);
+  S.pw = pw;
+  if (remember) ls.set('skarbiec_pw', pw);
+  const [mBlob, meta] = await Promise.all([fetchPublic('market.enc').catch(() => null), fetchPublic('meta.json').catch(() => null)]);
+  S.meta = meta;
+  S.market = mBlob ? (await decryptBlob(mBlob, pw).catch(() => ({ obj: null }))).obj : null;
+  S.market ||= { h: {}, fx: {}, pv: [], alerts: [], state: {} };
+  shell();
+  loadCatalog().then(() => { if (S.tab !== 'rynek') render(); }).catch(() => {});
+}
+
+(async function start() {
+  const th = ls.get('skarbiec_theme'); if (th) document.documentElement.dataset.theme = th;
+  $('#app').innerHTML = '<div class="login"><span class="spin"></span></div>';
+  try {
+    const exists = await fetchPublic('vault.enc');
+    if (!exists) return loginScreen('', true);
+    const saved = ls.get('skarbiec_pw');
+    if (saved) { try { await unlock(saved, true); return; } catch {} }
+    loginScreen('');
+  } catch (e) { loginScreen(e.message); }
+})();
+</script>
+</body>
+</html>
