@@ -69,7 +69,8 @@ Klucz zostaje tylko w tej przeglądarce (jak token GitHub). Na telefonie wklej g
 
 ### 8. Ceny EN/NM (opcjonalnie, 2 minuty)
 Publiczny cennik Cardmarketu ma tylko ceny ze wszystkich języków. Prawdziwe najtańsze oferty **po angielsku, NM, z wysyłką do Polski** zbiera skrypt Tampermonkey:
-1. Tampermonkey → **Utwórz nowy skrypt** → wklej całą treść pliku `tampermonkey/skarbiec_en.user.js` → **Zapisz**.
+1. Otwórz `https://TWÓJ-LOGIN.github.io/skarbiec_pokemon/skarbiec_en.user.js`. Tampermonkey pokaże okno instalacji → **Zainstaluj**. Aktualizacje pobierze sam.
+   - W Chrome Tampermonkey musi mieć włączone uruchamianie skryptów: `chrome://extensions` → Tampermonkey → **Szczegóły** → **Zezwalaj na skrypty użytkownika** (w starszych wersjach: **Tryb dewelopera** w prawym górnym rogu).
 2. Otwórz raz stronę Skarbca w tej samej przeglądarce. Skrypt sam weźmie z niej token i nazwę prywatnego repo, niczego nie wpisujesz.
 3. Od teraz raz na dobę, gdy wejdziesz na dowolną stronę Cardmarketu (zalogowany), skrypt w tle sprawdzi ceny kart z twoich watchlist i portfela. Trwa to ok. 3 s na kartę, a w lewym dolnym rogu widać postęp. Zamknięcie karty przerywa sprawdzanie, a skrypt dokończy przy następnej wizycie.
 4. W Skarbcu kolumna **Najtaniej EN/NM**. Link „odśwież teraz ↗” pod tabelą wymusza sprawdzenie od razu.

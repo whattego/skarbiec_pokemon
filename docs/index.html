@@ -529,7 +529,7 @@ function vWatch(v) {
 
 function enNote(rows) {
   const ens = rows.map(r => r.en).filter(e => e?.min != null);
-  if (!ens.length) return `Najtaniej EN/NM: najtańsza oferta po angielsku w stanie NM z wysyłką do Polski. Publiczny cennik Cardmarketu tego nie ma – ceny zbiera skrypt Tampermonkey „Skarbiec – ceny EN/NM” sam, raz na dobę, gdy jesteś na Cardmarkecie. <a href="${CM_EN_REFRESH}" target="_blank" rel="noopener">Sprawdź teraz ↗</a>`;
+  if (!ens.length) return `Najtaniej EN/NM: najtańsza oferta po angielsku w stanie NM z wysyłką do Polski. Publiczny cennik Cardmarketu tego nie ma – ceny zbiera skrypt Tampermonkey „Skarbiec – ceny EN/NM” sam, raz na dobę, gdy jesteś na Cardmarkecie. <a href="skarbiec_en.user.js" target="_blank" rel="noopener">Zainstaluj skrypt</a> · <a href="${CM_EN_REFRESH}" target="_blank" rel="noopener">sprawdź teraz ↗</a>`;
   const t = ens.map(e => e.t).sort()[0], sum = ens.reduce((a, e) => a + e.min, 0);
   return `Najtaniej EN/NM: oferty po angielsku, NM, z wysyłką do Polski (cena bez wysyłki) · ${ens.length}/${rows.length} kart razem ${E(sum)} · sprawdzone ${agoPL(t)}, odświeża się samo raz na dobę przy wizycie na Cardmarkecie · <a href="${CM_EN_REFRESH}" target="_blank" rel="noopener">odśwież teraz ↗</a> · 🔎 = ponad 15% poniżej trendu.`;
 }
