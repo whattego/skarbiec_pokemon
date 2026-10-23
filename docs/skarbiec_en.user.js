@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Skarbiec – ceny EN/NM z Cardmarketu (automatycznie)
 // @namespace    itmate.skarbiec-en
-// @version      1.3
+// @version      1.4
 // @description  Sprawdza najtańsze oferty EN/NM z wysyłką do PL dla kart z twojego Skarbca (watchlisty + portfel) i zapisuje je w prywatnym repo. Uruchamiasz przyciskiem „Uaktualnij ceny EN/NM” w Skarbcu (otwiera na chwilę kartę Cardmarketu); działa też samo przy wizycie na Cardmarkecie, gdy ceny mają ponad 20 h.
 // @match        https://www.cardmarket.com/*
 // @match        https://*.github.io/*
@@ -20,7 +20,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.3';
+  const VERSION = '1.4';
   const EVERY_H = 20;            // jak często odświeżać samo przy wizycie na Cardmarkecie (godziny)
   const MAX_CARDS = 150;         // maks. kart na jedno odświeżenie
   const HISTORY_MAX = 400;       // ile pomiarów trzymać w en/history.json
@@ -106,7 +106,10 @@
     const cfg = GM_getValue(CFG, null);
     if (!cfg?.token || !cfg.repo) return report('warn', 'skrypt działa, ale nie zna tokenu – otwórz raz stronę Skarbca w tej przeglądarce.', 10000);
     if (isChallenge(document.title)) return report('warn', 'przejdź weryfikację Cardmarketu na tej karcie, potem kliknij „Uaktualnij” w Skarbcu jeszcze raz.');
-    if (!document.querySelector('a[href*="Logout"], form[action*="Logout"]')) return report('err', 'nie jesteś zalogowany na Cardmarket – zaloguj się na tej karcie, potem kliknij „Uaktualnij” w Skarbcu jeszcze raz.');
+    // menu konta (link „Log out”) Cardmarket dorysowuje po załadowaniu strony – czekamy do 10 s
+    const loggedIn = () => !!document.querySelector('a[href*="Logout"], form[action*="Logout"]');
+    for (let i = 0; i < 20 && !loggedIn(); i++) await sleep(500);
+    if (!loggedIn()) return report('err', 'nie jesteś zalogowany na Cardmarket – zaloguj się na tej karcie, potem kliknij „Uaktualnij” w Skarbcu jeszcze raz.');
     const last = GM_getValue(LAST, 0);
     if (!force && Date.now() - last < EVERY_H * 36e5) {
       if (/^\/\w+\/Pokemon\/?$/.test(location.pathname)) report('ok', `ceny EN/NM aktualne (sprawdzone ${Math.round((Date.now() - last) / 36e5)} godz. temu).`, 4000);
