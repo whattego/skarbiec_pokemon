@@ -282,7 +282,7 @@ function seriesSum(items, idx = 1) {
 }
 function itemMeta(it) {
   const r = catRow(it.id);
-  const name = it.name || (r ? r[1] : `#${it.id}`);
+  const name = it.name || (r ? r[1] : `Produkt #${it.id}`);
   const set = it.set || (r ? S.catalog.exp[r[3]] : '') || '';
   const kind = it.kind || (r ? S.catalog.kinds[r[2]] : '') || '';
   return { name: name + (it.holo ? ' (Reverse Holo)' : ''), set, kind };
@@ -427,7 +427,7 @@ function vPulpit(v) {
   ${wls.length ? `<h2 style="margin:20px 0 10px">Watchlisty</h2><div class="grid g3">${wls.map(wl => {
     const ser = seriesSum(wl.items || []), now = ser.at(-1)?.[1] ?? (wl.items || []).reduce((a, it) => a + (nowPrice(it)?.trend || 0) * (it.qty || 1), 0);
     const wk = ser.filter(([d]) => d <= addDays(ser.at(-1)?.[0] || '', -7)).at(-1)?.[1];
-    const p7 = pct(now, wk), below = wl.target_eur && now <= wl.target_eur;
+    const p7 = pct(now, wk), below = wl.target_eur && now > 0 && now <= wl.target_eur;
     return `<button class="card" style="text-align:left;cursor:pointer" data-act="openwl" data-id="${esc(wl.id)}">
       <div class="spread"><b>${esc(wl.name)}</b>${wl.target_eur ? (below ? '<span class="badge good"><span class="dot"></span>Poniżej progu</span>' : `<span class="badge">próg ${E(wl.target_eur)}</span>`) : ''}</div>
       <div class="spread" style="margin-top:8px;align-items:flex-end"><div><div class="val" style="font-size:20px;font-weight:650">${E(now)}</div>
@@ -469,6 +469,7 @@ function vWatch(v) {
     return { it, p, m, d1, d7, v30, hit, sp: h.slice(-60).map(r => r[1]) };
   }).sort((a, b) => (b.p?.trend || 0) * (b.it.qty || 1) - (a.p?.trend || 0) * (a.it.qty || 1));
   $('#wlbody').innerHTML = `
+  ${!S.catalog ? `<div class="banner" style="margin-bottom:12px">⏳ Brak cennika – bot jeszcze ani razu nie pobrał cen, więc nie ma nazw ani trendów. <button class="btn sm" data-act="runbot">▶ Uruchom bota</button> i odśwież stronę za ok. 3 minuty.</div>` : ''}
   <div class="card">
     <div class="spread"><div><h2 style="margin:0">${esc(wl.name)}</h2><div class="muted" style="font-size:12px">${items.length} pozycji · suma według ${wl.metric === 'avg7' ? 'średniej z 7 dni' : 'trendu'} Cardmarketu</div></div>
       <div class="row"><button class="btn sm" data-act="addto" data-mode="watch">+ Dodaj pozycję</button><button class="btn sm" data-act="editwl">Ustawienia listy</button><button class="btn sm" data-act="exportwl">Kopiuj JSON</button></div></div>
@@ -476,19 +477,20 @@ function vWatch(v) {
       <div class="stat"><div class="lbl">Suma teraz</div><div class="val">${E(now)}</div><div class="note">≈ ${P(now * fxNow())}</div></div>
       <div class="stat"><div class="lbl">Zmiana 7 dni</div><div class="val ${cls(pct(now, back(7)))}">${PC(pct(now, back(7)))}</div><div class="note">30 dni: ${PC(pct(now, back(30)))} · vs śr. 30 dni: ${PC(pct(now, avg30sum))}</div></div>
       <div class="stat"><div class="lbl">Od szczytu</div><div class="val ${cls(pct(now, peak))}">${PC(pct(now, peak))}</div><div class="note">szczyt ${E(peak)}${ser.length ? ' od ' + dPL(ser[0][0]) : ''}</div></div>
-      <div class="stat"><div class="lbl">Próg okazji</div><div class="val">${wl.target_eur ? E(wl.target_eur) : '—'}</div><div class="note">${wl.target_eur ? (now <= wl.target_eur ? '<span class="badge good"><span class="dot"></span>poniżej progu</span>' : `brakuje ${E(now - wl.target_eur)} (${PC(pct(wl.target_eur, now))})`) : '<a href="#" data-act="editwl">ustaw próg</a>'}</div></div>
+      <div class="stat"><div class="lbl">Próg okazji</div><div class="val">${wl.target_eur ? E(wl.target_eur) : '—'}</div><div class="note">${wl.target_eur ? (!(now > 0) ? 'brak cen' : now <= wl.target_eur ? '<span class="badge good"><span class="dot"></span>poniżej progu</span>' : `brakuje ${E(now - wl.target_eur)} (${PC(pct(wl.target_eur, now))})`) : '<a href="#" data-act="editwl">ustaw próg</a>'}</div></div>
     </div>
     ${ser.length >= 2 ? legend([['Suma listy', css('--s1')], ...(wl.target_eur ? [['Próg okazji', css('--s4'), true]] : [])]) + '<div class="chart"><canvas id="c-wl"></canvas></div>' : `<div class="banner">📈 Wykres pojawi się po drugim pomiarze bota (zapisuje ceny raz dziennie od chwili dodania pozycji).${ser.length ? '' : ' Nowe pozycje dostaną pierwszy pomiar przy najbliższym uruchomieniu bota.'}</div>`}
   </div>
   <div class="card" style="margin-top:12px"><div class="tblw"><table class="tbl">
     <tr><th>Pozycja</th><th>Trend</th><th>1 dzień</th><th>7 dni</th><th>vs śr. 30 dni</th><th>Najtaniej*</th><th>Kup poniżej</th><th>60 dni</th><th></th></tr>
     ${rows.map(r => `<tr class="click" data-act="detail" data-id="${r.it.id}" data-holo="${r.it.holo ? 1 : ''}">
-      <td class="name"><div class="nm">${esc(r.m.name)}${(r.it.qty || 1) > 1 ? ` ×${r.it.qty}` : ''}<small>${esc(r.m.set || KIND[r.m.kind] || '')}</small></div></td>
+      <td class="name"><div class="nm">${esc(r.m.name)}${(r.it.qty || 1) > 1 ? ` ×${r.it.qty}` : ''} ${cmA(r.it.id, r.m.name, r.it.holo)}<small>${esc(r.m.set || KIND[r.m.kind] || '')}</small></div></td>
       <td><b>${E(r.p?.trend)}</b></td><td class="${cls(r.d1)}">${PC(r.d1)}</td><td class="${cls(r.d7)}">${PC(r.d7)}</td><td class="${cls(r.v30)}">${PC(r.v30)}</td>
       <td class="muted">${E(r.p?.low)}</td><td>${r.it.buy_below ? (r.hit ? `<span class="badge good"><span class="dot"></span>${E(r.it.buy_below)}</span>` : E(r.it.buy_below)) : '<span class="muted">—</span>'}</td>
       <td>${spark(r.sp)}</td><td><button class="btn sm" data-act="edititem" data-k="${esc(keyOf(r.it))}" title="Edytuj">✎</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Pusta lista – dodaj pozycje.</td></tr>'}
   </table></div><p class="muted" style="font-size:12px;margin:8px 0 0">* najtańsza oferta na Cardmarkecie w dowolnym języku i stanie – zwykle zaniżona względem EN/NM.</p></div>`;
   if (ser.length >= 2) lineChart($('#c-wl'), labels, [{ label: 'Suma', data: ser.map(r => r[1]), color: css('--s1') }], { target: wl.target_eur || null });
+  if (!S.catalog) loadCatalog().then(() => { if (S.tab === 'watch') render(); }).catch(() => {});
 }
 
 // ---------- Portfel ----------
@@ -509,7 +511,7 @@ function vPortfel(v) {
   <div class="card" style="margin-top:12px"><h2>Pozycje</h2><div class="tblw"><table class="tbl">
     <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
     ${pf.active.sort((a, b) => (b.value || 0) - (a.value || 0)).map(r => `<tr>
-      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}">${esc(r.m.name)}<small>${esc([r.m.set || KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
+      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}">${esc(r.m.name)} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set || KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
       <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
       <td class="${cls(r.plp)}">${r.pl != null ? `${r.pl >= 0 ? '+' : '−'}${P(Math.abs(r.pl))}<br><small>${PC(r.plp)}</small>` : '—'}</td>
       <td class="${cls(r.d7)}">${PC(r.d7)}</td>
@@ -640,10 +642,16 @@ async function resolveCard(c) {
   // karty bez produktu na Cardmarket (np. TCG Pocket) odpadają, jeśli są inne kandydatury
   return out.some(x => x.idp) ? out.filter(x => x.idp) : out;
 }
-function cmLink(id, fallbackName) {   // Cardmarket nie ma linku po idProduct – wyszukiwarka po nazwie (+ dodatek, jeśli strona go uwzględni)
-  const r = catRow(id), name = (r ? r[1] : fallbackName || '').replace(/\s*\[.*?\]\s*/g, ' ').replace(/\(V\.\d+\)/, '').trim();
+function cmLink(id, fallbackName, holo) {
+  // 1) dokładny adres strony karty zapisany przy imporcie z Tampermonkey
+  const known = [...(S.vault?.watchlists || []).flatMap(w => w.items || []), ...(S.vault?.portfolio || [])].find(x => +x.id === +id && x.url && (holo == null || !!x.holo === !!holo));
+  if (known) return known.url;
+  // 2) Cardmarket nie ma linku po idProduct – wyszukiwarka po nazwie (+ dodatek, jeśli strona go uwzględni)
+  const r = catRow(id), name = (r ? r[1] : /^Produkt #/.test(fallbackName || '') ? '' : fallbackName || '').replace(/\s*\[.*?\]\s*/g, ' ').replace(/\(V\.\d+\)/, '').trim();
+  if (!name) return null;
   return `https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=${encodeURIComponent(name)}${r?.[3] ? `&idExpansion=${r[3]}` : ''}`;
 }
+const cmA = (id, name, holo) => { const u = cmLink(id, name, holo); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener" title="Otwórz na Cardmarket" onclick="event.stopPropagation()">↗</a>` : ''; };
 const scPrice = (card, holo) => { const r = catRow(card?.idp); return r ? (holo ? r[9] || r[4] : r[4]) : null; };
 
 async function scanJob(j) {
@@ -867,7 +875,7 @@ async function openDetail(id, holo) {
   const r = catRow(id), it = { id: +id, holo: !!holo };
   const m = itemMeta(it), p = nowPrice(it) || {}, k = keyOf(it), h = hist(k);
   const c = S.catalog;
-  const cmUrl = cmLink(id, m.name);
+  const cmUrl = cmLink(id, m.name, !!holo);
   const inWl = (S.vault.watchlists || []).filter(w => (w.items || []).some(x => keyOf(x) === k)).map(w => w.name);
   const held = (S.vault.portfolio || []).filter(x => !x.sold && keyOf(x) === k).reduce((a, x) => a + (x.qty || 1), 0);
   modal(m.name, `
@@ -881,7 +889,7 @@ async function openDetail(id, holo) {
       </dl>
       <div class="stack"><button class="btn primary" data-act="d-watch">+ Do watchlisty</button><button class="btn" data-act="d-port">+ Do portfela</button>
         ${!holo && r && r[9] ? '<button class="btn" data-act="d-holo">Pokaż wersję Reverse Holo</button>' : ''}
-        <a class="btn" style="text-align:center;text-decoration:none" href="${cmUrl}" target="_blank" rel="noopener">Otwórz na Cardmarket ↗</a></div>
+        ${cmUrl ? `<a class="btn" style="text-align:center;text-decoration:none" href="${esc(cmUrl)}" target="_blank" rel="noopener">Otwórz na Cardmarket ↗</a>` : ''}</div>
     </div>
     <h3 style="margin-top:18px">Historia ceny</h3><div id="d-hist"><span class="spin"></span> Ładuję…</div>
     <p class="muted" style="font-size:12px">* w dowolnym języku i stanie.</p>`, async d => {
@@ -1024,7 +1032,8 @@ function formImport() {
       let n = 0;
       for (const w of lists) {
         if (!w || !Array.isArray(w.products)) continue;
-        const items = w.products.map(p => typeof p === 'object' ? { id: +p.id, holo: !!p.holo } : { id: +p, holo: false }).map(it => ({ ...it, ...snapshotMeta(it), qty: 1 }));
+        const items = w.products.map(p => typeof p === 'object' ? { id: +p.id, holo: !!p.holo, name: p.name, url: p.url } : { id: +p, holo: false })
+          .map(it => { const m = snapshotMeta(it); return { ...it, ...m, name: m.name || it.name || undefined, ...(it.url ? { url: it.url } : {}), qty: 1 }; });
         const ex = (S.vault.watchlists || []).find(x => x.name === w.name);
         if (ex) { if (!confirm(`Lista „${w.name}” już istnieje. Zastąpić jej pozycje?`)) continue; ex.items = items; if (w.target) ex.target_eur = +w.target; S.wl = ex.id; }
         else { const rec = { id: uid(), name: w.name || 'Lista z Cardmarket', items, target_eur: w.target ? +w.target : null, metric: 'trend' }; S.vault.watchlists = [...(S.vault.watchlists || []), rec]; S.wl = rec.id; }
