@@ -279,7 +279,7 @@ async function syncTargets() {
     S._targets = json;
   } catch (e) { console.warn('lista kart EN/NM:', e.message); }
 }
-const CM_EN_REFRESH = 'https://www.cardmarket.com/en/Pokemon#skarbiec-en';
+const CM_EN_AUTO = 'https://www.cardmarket.com/en/Pokemon#skarbiec-en-auto';
 // suma najtańszych cen EN/NM listy w kolejnych pomiarach (ostatni pomiar dnia); tylko pomiary z ceną dla każdej pozycji
 function enSeries(items) {
   const byDay = new Map();
@@ -290,7 +290,7 @@ function enSeries(items) {
   }
   return [...byDay].sort((a, b) => a[0] < b[0] ? -1 : 1);
 }
-// komunikacja ze skryptem Tampermonkey (działa też na tej stronie): zdarzenie skarbiec-en-refresh → skrypt pobiera ceny z Cardmarketu
+// skrypt Tampermonkey działa też na tej stronie: ustawia dataset.skarbiecEn (wersja) i przekazuje postęp z karty Cardmarketu (skarbiec-en-status)
 const enScript = () => document.documentElement.dataset.skarbiecEn || null;
 document.addEventListener('skarbiec-en-status', () => {
   try { S.enStatus = JSON.parse(document.documentElement.dataset.skarbiecEnStatus || 'null'); } catch { return; }
@@ -565,7 +565,7 @@ function enNote(rows) {
   const ens = rows.map(r => r.en).filter(e => e?.min != null);
   if (!ens.length) return `Najtaniej EN/NM: najtańsza oferta po angielsku w stanie NM z wysyłką do Polski. Publiczny cennik Cardmarketu tego nie ma – ceny pobiera skrypt Tampermonkey „Skarbiec – ceny EN/NM” (przycisk „Uaktualnij ceny EN/NM”).${enScript() ? '' : ` <a href="skarbiec_en.user.js" target="_blank" rel="noopener">Zainstaluj skrypt</a>`}`;
   const t = ens.map(e => e.t).sort()[0];
-  return `Najtaniej EN/NM: oferty po angielsku, NM, od sprzedawców wysyłających do Polski (cena bez wysyłki) · ${ens.length}/${rows.length} kart · sprawdzone ${agoPL(t)} · odświeża się samo przy otwarciu Skarbca, gdy ceny mają ponad 20 godz. · 🔎 = ponad 15% poniżej trendu.`;
+  return `Najtaniej EN/NM: oferty po angielsku, NM, od sprzedawców wysyłających do Polski (cena bez wysyłki) · ${ens.length}/${rows.length} kart · sprawdzone ${agoPL(t)} · „Uaktualnij” otwiera na chwilę kartę Cardmarketu (zamyka się sama); przy zwykłej wizycie na Cardmarkecie ceny odświeżają się same, gdy mają ponad 20 godz. · 🔎 = ponad 15% poniżej trendu.`;
 }
 
 // ---------- Portfel ----------
@@ -1168,9 +1168,13 @@ const ACT = {
       return;
     }
     if (S.readOnly) return toast('Tryb tylko do odczytu – dodaj token GitHub w Ustawieniach.', 4500);
-    S.enStatus = { state: 'run', text: 'przygotowuję listę kart…' }; render();
+    // Cloudflare Cardmarketu wpuszcza tylko zapytania z karty cardmarket.com – otwieramy ją (w tym samym kliknięciu, żeby nie zablokowało okienek),
+    // skrypt sprawdza ceny, karta zamyka się sama, a postęp przychodzi tutaj (zdarzenie skarbiec-en-status)
+    const w = window.open('', '_blank');
+    if (!w) return toast('Przeglądarka zablokowała nową kartę – zezwól na wyskakujące okna dla tej strony.', 6000);
+    S.enStatus = { state: 'run', text: 'otwieram Cardmarket w nowej karcie…' }; render();
     await syncTargets();
-    document.dispatchEvent(new Event('skarbiec-en-refresh'));
+    w.location.href = CM_EN_AUTO;
   },
   scApprove: () => scApprove(),
   scClear: () => { SC.jobs = SC.jobs.filter(j => !['gotowe', 'błąd'].includes(j.status)); scQueue(); },

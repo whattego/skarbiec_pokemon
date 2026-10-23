@@ -72,7 +72,7 @@ Publiczny cennik Cardmarketu ma tylko ceny ze wszystkich języków. Prawdziwe na
 1. Otwórz `https://TWÓJ-LOGIN.github.io/skarbiec_pokemon/skarbiec_en.user.js` → Tampermonkey pokaże okno → **Zainstaluj** (aktualizacje pobierze sam).
    - W Chrome Tampermonkey musi mieć włączone uruchamianie skryptów: `chrome://extensions` → Tampermonkey → **Szczegóły** → **Zezwalaj na skrypty użytkownika** (w starszych wersjach: **Tryb dewelopera**).
 2. Bądź zalogowany na Cardmarket w tej przeglądarce.
-3. W Skarbcu: **Watchlisty → 🔄 Uaktualnij ceny EN/NM**. Trwa ok. 3 s na kartę, a postęp widać pod przyciskiem. Na Cardmarket nie trzeba wchodzić.
+3. W Skarbcu: **Watchlisty → 🔄 Uaktualnij ceny EN/NM**. Otworzy się na chwilę karta Cardmarketu (ok. 3 s na kartę) i zamknie się sama; postęp widać też pod przyciskiem w Skarbcu. Jeśli przeglądarka zablokuje nową kartę, zezwól na wyskakujące okna dla strony Skarbca.
 4. Ceny odświeżają się też same przy otwarciu Skarbca albo Cardmarketu, jeśli mają ponad 20 godzin. Wykres watchlisty pokazuje sumę EN/NM w czasie.
 
 ## Jak używać
