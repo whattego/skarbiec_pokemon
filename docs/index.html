@@ -245,12 +245,15 @@ const PHOTOS = {
     return this.urls.get(path);
   },
 };
-// ceny EN/NM: zapisuje je Tampermonkey (tryb #track, przycisk „🔗 Skarbiec”) w prywatnym repo jako en/<idListy>.json
-// publiczny cennik Cardmarketu ma tylko „low” ze wszystkich języków i stanów
+// ceny EN/NM: zapisuje je skrypt Tampermonkey „Skarbiec – ceny EN/NM” w prywatnym repo: en/auto.json (ostatni pomiar),
+// en/history.json (najtańsza cena każdej karty w kolejnych pomiarach); publiczny cennik CM ma tylko „low” ze wszystkich języków
 async function loadEN() {
   if (!GH.token || !PHOTOS.repo) return;
   try {
-    const files = (await GH.call('/contents/en', {}, PHOTOS.repo).catch(e => { if (/ 404/.test(e.message)) return []; throw e; })).filter(f => f.name.endsWith('.json') && f.name !== 'targets.json');
+    const all = await GH.call('/contents/en', {}, PHOTOS.repo).catch(e => { if (/ 404/.test(e.message)) return []; throw e; });
+    if (all.some(f => f.name === 'history.json'))
+      S.enHist = (await GH.call('/contents/en/history.json', { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null))?.h || [];
+    const files = all.filter(f => f.name.endsWith('.json') && !['targets.json', 'history.json'].includes(f.name));
     const docs = await Promise.all(files.map(f => GH.call(`/contents/en/${encodeURIComponent(f.name)}`, { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null)));
     const m = new Map();
     for (const d of docs.filter(Boolean)) for (const [k, v] of Object.entries(d.items || {})) {
@@ -277,6 +280,29 @@ async function syncTargets() {
   } catch (e) { console.warn('lista kart EN/NM:', e.message); }
 }
 const CM_EN_REFRESH = 'https://www.cardmarket.com/en/Pokemon#skarbiec-en';
+// suma najtańszych cen EN/NM listy w kolejnych pomiarach (ostatni pomiar dnia); tylko pomiary z ceną dla każdej pozycji
+function enSeries(items) {
+  const byDay = new Map();
+  for (const e of S.enHist || []) {
+    let sum = 0, ok = items.length > 0;
+    for (const it of items) { const v = e.p?.[keyOf(it)]; if (v == null) { ok = false; break; } sum += v * (it.qty || 1); }
+    if (ok) byDay.set(new Date(e.t).toLocaleDateString('sv-SE'), +sum.toFixed(2));
+  }
+  return [...byDay].sort((a, b) => a[0] < b[0] ? -1 : 1);
+}
+// komunikacja ze skryptem Tampermonkey (działa też na tej stronie): zdarzenie skarbiec-en-refresh → skrypt pobiera ceny z Cardmarketu
+const enScript = () => document.documentElement.dataset.skarbiecEn || null;
+document.addEventListener('skarbiec-en-status', () => {
+  try { S.enStatus = JSON.parse(document.documentElement.dataset.skarbiecEnStatus || 'null'); } catch { return; }
+  if (!S.vault) return;   // jeszcze przed zalogowaniem – status pokaże się po wejściu
+  if (S.enStatus?.state === 'ok') loadEN().then(() => render());
+  else { const el = $('#en-status'); if (el) el.outerHTML = enStatusHTML(); }
+});
+function enStatusHTML() {
+  const s = S.enStatus; if (!s) return '<span id="en-status"></span>';
+  const col = { run: 'muted', ok: 'up', warn: '', err: 'down' }[s.state] ?? 'muted';
+  return `<span id="en-status" class="${col}" style="font-size:12px">${s.state === 'run' ? '<span class="spin"></span> ' : ''}${esc(s.text)}</span>`;
+}
 const agoPL = iso => { const h = (Date.now() - new Date(iso)) / 36e5; return h < 1 ? 'przed chwilą' : h < 24 ? `${Math.round(h)} godz. temu` : `${Math.round(h / 24)} dni temu`; };
 async function fetchPublic(path) {
   const r = await fetch(`${path}?t=${Date.now()}`, { cache: 'no-store' });
@@ -491,8 +517,10 @@ function vWatch(v) {
   <div id="wlbody">${wl ? '' : `<div class="card empty"><div class="big">Nie masz jeszcze żadnej watchlisty</div>Utwórz listę i dodaj do niej karty albo sealed z wyszukiwarki,<br>albo wklej konfigurację z przycisku 🤖 w trybie <code>#track</code> skryptu Tampermonkey.</div>`}</div>`;
   if (!wl) return;
   const items = wl.items || [];
-  const ser = seriesSum(items), labels = ser.map(r => r[0]);
+  const ser = seriesSum(items), enSer = enSeries(items);
+  const labels = [...new Set([...ser.map(r => r[0]), ...enSer.map(r => r[0])])].sort();
   const now = ser.at(-1)?.[1] ?? items.reduce((a, it) => a + (nowPrice(it)?.trend || 0) * (it.qty || 1), 0);
+  const enNow = items.length && items.every(it => enOf(it)?.min != null) ? items.reduce((a, it) => a + enOf(it).min * (it.qty || 1), 0) : null;
   const back = n => ser.filter(([d]) => d <= addDays(ser.at(-1)?.[0] || '', -n)).at(-1)?.[1];
   const peak = ser.length ? Math.max(...ser.map(r => r[1])) : null;
   const avg30sum = items.every(it => nowPrice(it)?.avg30) ? items.reduce((a, it) => a + nowPrice(it).avg30 * (it.qty || 1), 0) : null;
@@ -506,14 +534,15 @@ function vWatch(v) {
   ${!S.catalog ? `<div class="banner" style="margin-bottom:12px">⏳ Brak cennika – bot jeszcze ani razu nie pobrał cen, więc nie ma nazw ani trendów. <button class="btn sm" data-act="runbot">▶ Uruchom bota</button> i odśwież stronę za ok. 3 minuty.</div>` : ''}
   <div class="card">
     <div class="spread"><div><h2 style="margin:0">${esc(wl.name)}</h2><div class="muted" style="font-size:12px">${items.length} pozycji · suma według ${wl.metric === 'avg7' ? 'średniej z 7 dni' : 'trendu'} Cardmarketu</div></div>
-      <div class="row"><button class="btn sm" data-act="addto" data-mode="watch">+ Dodaj pozycję</button><button class="btn sm" data-act="editwl">Ustawienia listy</button><button class="btn sm" data-act="exportwl">Kopiuj JSON</button></div></div>
+      <div class="row"><button class="btn sm primary" data-act="enRefresh" ${S.enStatus?.state === 'run' ? 'disabled' : ''}>🔄 Uaktualnij ceny EN/NM</button><button class="btn sm" data-act="addto" data-mode="watch">+ Dodaj pozycję</button><button class="btn sm" data-act="editwl">Ustawienia listy</button><button class="btn sm" data-act="exportwl">Kopiuj JSON</button></div></div>
+    <div style="text-align:right;margin-top:4px">${enStatusHTML()}</div>
     <div class="grid g4" style="margin:14px 0">
-      <div class="stat"><div class="lbl">Suma teraz</div><div class="val">${E(now)}</div><div class="note">≈ ${P(now * fxNow())}</div></div>
+      <div class="stat"><div class="lbl">Najtaniej EN/NM razem</div><div class="val">${E(enNow)}</div><div class="note">${enNow != null ? `≈ ${P(enNow * fxNow())} · bez wysyłki` : 'kliknij „Uaktualnij ceny EN/NM”'}</div></div>
+      <div class="stat"><div class="lbl">Suma wg trendu</div><div class="val">${E(now)}</div><div class="note">≈ ${P(now * fxNow())} · wszystkie języki</div></div>
       <div class="stat"><div class="lbl">Zmiana 7 dni</div><div class="val ${cls(pct(now, back(7)))}">${PC(pct(now, back(7)))}</div><div class="note">30 dni: ${PC(pct(now, back(30)))} · vs śr. 30 dni: ${PC(pct(now, avg30sum))}</div></div>
-      <div class="stat"><div class="lbl">Od szczytu</div><div class="val ${cls(pct(now, peak))}">${PC(pct(now, peak))}</div><div class="note">szczyt ${E(peak)}${ser.length ? ' od ' + dPL(ser[0][0]) : ''}</div></div>
-      <div class="stat"><div class="lbl">Próg okazji</div><div class="val">${wl.target_eur ? E(wl.target_eur) : '—'}</div><div class="note">${wl.target_eur ? (!(now > 0) ? 'brak cen' : now <= wl.target_eur ? '<span class="badge good"><span class="dot"></span>poniżej progu</span>' : `brakuje ${E(now - wl.target_eur)} (${PC(pct(wl.target_eur, now))})`) : '<a href="#" data-act="editwl">ustaw próg</a>'}</div></div>
+      <div class="stat"><div class="lbl">Próg okazji</div><div class="val">${wl.target_eur ? E(wl.target_eur) : '—'}</div><div class="note">${wl.target_eur ? (enNow != null ? (enNow <= wl.target_eur ? '<span class="badge good"><span class="dot"></span>EN/NM poniżej progu</span>' : `EN/NM brakuje ${E(enNow - wl.target_eur)}`) : !(now > 0) ? 'brak cen' : now <= wl.target_eur ? '<span class="badge good"><span class="dot"></span>trend poniżej progu</span>' : `trend: brakuje ${E(now - wl.target_eur)}`) : '<a href="#" data-act="editwl">ustaw próg</a>'}</div></div>
     </div>
-    ${ser.length >= 2 ? legend([['Suma listy', css('--s1')], ...(wl.target_eur ? [['Próg okazji', css('--s4'), true]] : [])]) + '<div class="chart"><canvas id="c-wl"></canvas></div>' : `<div class="banner">📈 Wykres pojawi się po drugim pomiarze bota (zapisuje ceny raz dziennie od chwili dodania pozycji).${ser.length ? '' : ' Nowe pozycje dostaną pierwszy pomiar przy najbliższym uruchomieniu bota.'}</div>`}
+    ${labels.length >= 2 || enSer.length ? legend([['Najtaniej EN/NM razem', css('--s3')], ['Suma wg trendu', css('--s1')], ...(wl.target_eur ? [['Próg okazji', css('--s4'), true]] : [])]) + '<div class="chart"><canvas id="c-wl"></canvas></div>' : `<div class="banner">📈 Wykres pojawi się po drugim pomiarze bota albo po pierwszym „Uaktualnij ceny EN/NM”.</div>`}
   </div>
   <div class="card" style="margin-top:12px"><div class="tblw"><table class="tbl">
     <tr><th>Pozycja</th><th>Trend</th><th>1 dzień</th><th>7 dni</th><th>vs śr. 30 dni</th><th>Najtaniej EN/NM</th><th>Kup poniżej</th><th>60 dni</th><th></th></tr>
@@ -523,15 +552,20 @@ function vWatch(v) {
       <td>${r.en?.min != null ? `<span title="${esc(`${r.en.n || 0} ofert EN/NM z wysyłką do PL · najtańszy: ${r.en.seller || '?'} · pomiar ${new Date(r.en.t).toLocaleString('pl-PL')}`)}">${E(r.en.min)}</span>${r.p?.trend && r.en.min < r.p.trend * 0.85 ? ' 🔎' : ''}` : '<span class="muted">—</span>'}</td><td>${r.it.buy_below ? (r.hit ? `<span class="badge good"><span class="dot"></span>${E(r.it.buy_below)}</span>` : E(r.it.buy_below)) : '<span class="muted">—</span>'}</td>
       <td>${spark(r.sp)}</td><td><button class="btn sm" data-act="edititem" data-k="${esc(keyOf(r.it))}" title="Edytuj">✎</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Pusta lista – dodaj pozycje.</td></tr>'}
   </table></div><p class="muted" style="font-size:12px;margin:8px 0 0">${enNote(rows)}</p></div>`;
-  if (ser.length >= 2) lineChart($('#c-wl'), labels, [{ label: 'Suma', data: ser.map(r => r[1]), color: css('--s1') }], { target: wl.target_eur || null });
+  if ($('#c-wl')) {
+    const at = (s, d) => s.find(r => r[0] === d)?.[1] ?? null;
+    lineChart($('#c-wl'), labels, [
+      { label: 'EN/NM', data: labels.map(d => at(enSer, d)), color: css('--s3') },
+      { label: 'Trend', data: labels.map(d => at(ser, d)), color: css('--s1') }], { target: wl.target_eur || null });
+  }
   if (!S.catalog) loadCatalog().then(() => { if (S.tab === 'watch') render(); }).catch(() => {});
 }
 
 function enNote(rows) {
   const ens = rows.map(r => r.en).filter(e => e?.min != null);
-  if (!ens.length) return `Najtaniej EN/NM: najtańsza oferta po angielsku w stanie NM z wysyłką do Polski. Publiczny cennik Cardmarketu tego nie ma – ceny zbiera skrypt Tampermonkey „Skarbiec – ceny EN/NM” sam, raz na dobę, gdy jesteś na Cardmarkecie. <a href="skarbiec_en.user.js" target="_blank" rel="noopener">Zainstaluj skrypt</a> · <a href="${CM_EN_REFRESH}" target="_blank" rel="noopener">sprawdź teraz ↗</a>`;
-  const t = ens.map(e => e.t).sort()[0], sum = ens.reduce((a, e) => a + e.min, 0);
-  return `Najtaniej EN/NM: oferty po angielsku, NM, z wysyłką do Polski (cena bez wysyłki) · ${ens.length}/${rows.length} kart razem ${E(sum)} · sprawdzone ${agoPL(t)}, odświeża się samo raz na dobę przy wizycie na Cardmarkecie · <a href="${CM_EN_REFRESH}" target="_blank" rel="noopener">odśwież teraz ↗</a> · 🔎 = ponad 15% poniżej trendu.`;
+  if (!ens.length) return `Najtaniej EN/NM: najtańsza oferta po angielsku w stanie NM z wysyłką do Polski. Publiczny cennik Cardmarketu tego nie ma – ceny pobiera skrypt Tampermonkey „Skarbiec – ceny EN/NM” (przycisk „Uaktualnij ceny EN/NM”).${enScript() ? '' : ` <a href="skarbiec_en.user.js" target="_blank" rel="noopener">Zainstaluj skrypt</a>`}`;
+  const t = ens.map(e => e.t).sort()[0];
+  return `Najtaniej EN/NM: oferty po angielsku, NM, od sprzedawców wysyłających do Polski (cena bez wysyłki) · ${ens.length}/${rows.length} kart · sprawdzone ${agoPL(t)} · odświeża się samo przy otwarciu Skarbca, gdy ceny mają ponad 20 godz. · 🔎 = ponad 15% poniżej trendu.`;
 }
 
 // ---------- Portfel ----------
@@ -1125,6 +1159,18 @@ const ACT = {
     try { const r = await GH.call('', {}, PHOTOS.repo); res.push(r.private ? '<span class="up">✓ repo zdjęć (prywatne)</span>' : '<span class="down">⚠ repo zdjęć jest PUBLICZNE – zmień na prywatne</span>'); }
     catch (e) { res.push(`<span class="down">repo zdjęć: ${esc(/ 404/.test(e.message) ? 'nie istnieje albo token nie ma do niego dostępu' : e.message)}</span>`); }
     out.innerHTML = res.join(' · ');
+  },
+  enRefresh: async () => {
+    if (!enScript()) {
+      modal('Ceny EN/NM – potrzebny skrypt', `<p style="margin-top:0">Ceny ofert EN/NM pobiera z Cardmarketu skrypt Tampermonkey w twojej przeglądarce (twoja sesja Cardmarketu, nic nie trafia na żaden serwer).</p>
+        <ol><li><a href="skarbiec_en.user.js" target="_blank" rel="noopener">Zainstaluj skrypt</a> – Tampermonkey pokaże okno „Zainstaluj”.</li><li>Odśwież tę stronę i kliknij „Uaktualnij ceny EN/NM” jeszcze raz.</li></ol>
+        <p class="muted" style="font-size:12px">Musisz być zalogowany na Cardmarket w tej przeglądarce.</p>`);
+      return;
+    }
+    if (S.readOnly) return toast('Tryb tylko do odczytu – dodaj token GitHub w Ustawieniach.', 4500);
+    S.enStatus = { state: 'run', text: 'przygotowuję listę kart…' }; render();
+    await syncTargets();
+    document.dispatchEvent(new Event('skarbiec-en-refresh'));
   },
   scApprove: () => scApprove(),
   scClear: () => { SC.jobs = SC.jobs.filter(j => !['gotowe', 'błąd'].includes(j.status)); scQueue(); },
