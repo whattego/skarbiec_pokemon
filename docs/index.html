@@ -245,6 +245,39 @@ const PHOTOS = {
     return this.urls.get(path);
   },
 };
+// ceny EN/NM: zapisuje je Tampermonkey (tryb #track, przycisk „🔗 Skarbiec”) w prywatnym repo jako en/<idListy>.json
+// publiczny cennik Cardmarketu ma tylko „low” ze wszystkich języków i stanów
+async function loadEN() {
+  if (!GH.token || !PHOTOS.repo) return;
+  try {
+    const files = (await GH.call('/contents/en', {}, PHOTOS.repo).catch(e => { if (/ 404/.test(e.message)) return []; throw e; })).filter(f => f.name.endsWith('.json') && f.name !== 'targets.json');
+    const docs = await Promise.all(files.map(f => GH.call(`/contents/en/${encodeURIComponent(f.name)}`, { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null)));
+    const m = new Map();
+    for (const d of docs.filter(Boolean)) for (const [k, v] of Object.entries(d.items || {})) {
+      const cur = m.get(k);
+      if (!cur || cur.t < d.t) m.set(k, { ...v, t: d.t, list: d.name || d.list });
+    }
+    S.en = m;
+  } catch (e) { console.warn('ceny EN/NM:', e.message); }
+}
+const enOf = it => S.en?.get(keyOf(it)) || null;
+// lista kart dla skryptu Tampermonkey „Skarbiec – ceny EN/NM” (watchlisty + nie sprzedany portfel); jawna, ale w prywatnym repo
+async function syncTargets() {
+  if (S.readOnly || !GH.token || !PHOTOS.repo) return;
+  const seen = new Map();
+  for (const it of [...(S.vault.watchlists || []).flatMap(w => w.items || []), ...(S.vault.portfolio || []).filter(h => !h.sold)])
+    if (+it.id > 0 && !seen.has(keyOf(it))) seen.set(keyOf(it), { id: +it.id, holo: !!it.holo, name: itemMeta(it).name });
+  const json = JSON.stringify({ v: 1, items: [...seen.values()] });
+  if (json === S._targets) return;
+  try {
+    let sha; try { sha = (await GH.call('/contents/en/targets.json', {}, PHOTOS.repo)).sha; } catch (e) { if (!/ 404/.test(e.message)) throw e; }
+    if (!PHOTOS.branch) PHOTOS.branch = (await GH.call('', {}, PHOTOS.repo)).default_branch || 'main';
+    await GH.call('/contents/en/targets.json', { method: 'PUT', body: JSON.stringify({ message: `lista kart do cen EN/NM (${seen.size})`, content: b64e(new TextEncoder().encode(json)), branch: PHOTOS.branch, ...(sha ? { sha } : {}) }) }, PHOTOS.repo);
+    S._targets = json;
+  } catch (e) { console.warn('lista kart EN/NM:', e.message); }
+}
+const CM_EN_REFRESH = 'https://www.cardmarket.com/en/Pokemon#skarbiec-en';
+const agoPL = iso => { const h = (Date.now() - new Date(iso)) / 36e5; return h < 1 ? 'przed chwilą' : h < 24 ? `${Math.round(h)} godz. temu` : `${Math.round(h / 24)} dni temu`; };
 async function fetchPublic(path) {
   const r = await fetch(`${path}?t=${Date.now()}`, { cache: 'no-store' });
   if (r.status === 404) return null;
@@ -307,6 +340,7 @@ async function saveVault(msg) {
   try {
     const r = await GH.putFile('docs/vault.enc', JSON.stringify(blob), S.vaultSha, msg || 'skarbiec: zmiana');
     S.vaultSha = r.content.sha; S.vaultSaved = JSON.stringify(S.vault); toast('Zapisano ✓ Bot uwzględni zmiany przy najbliższym pomiarze.');
+    syncTargets();
     return true;
   } catch (e) {
     revert();
@@ -466,7 +500,7 @@ function vWatch(v) {
     const p = nowPrice(it), m = itemMeta(it), k = keyOf(it), h = hist(k);
     const d1 = h.length >= 2 ? pct(h.at(-1)[1], h.at(-2)[1]) : null, d7 = pct(p?.trend, valueAgo(k, 7)), v30 = pct(p?.trend, p?.avg30);
     const hit = it.buy_below && p?.trend != null && p.trend <= it.buy_below;
-    return { it, p, m, d1, d7, v30, hit, sp: h.slice(-60).map(r => r[1]) };
+    return { it, p, m, d1, d7, v30, hit, en: enOf(it), sp: h.slice(-60).map(r => r[1]) };
   }).sort((a, b) => (b.p?.trend || 0) * (b.it.qty || 1) - (a.p?.trend || 0) * (a.it.qty || 1));
   $('#wlbody').innerHTML = `
   ${!S.catalog ? `<div class="banner" style="margin-bottom:12px">⏳ Brak cennika – bot jeszcze ani razu nie pobrał cen, więc nie ma nazw ani trendów. <button class="btn sm" data-act="runbot">▶ Uruchom bota</button> i odśwież stronę za ok. 3 minuty.</div>` : ''}
@@ -482,15 +516,22 @@ function vWatch(v) {
     ${ser.length >= 2 ? legend([['Suma listy', css('--s1')], ...(wl.target_eur ? [['Próg okazji', css('--s4'), true]] : [])]) + '<div class="chart"><canvas id="c-wl"></canvas></div>' : `<div class="banner">📈 Wykres pojawi się po drugim pomiarze bota (zapisuje ceny raz dziennie od chwili dodania pozycji).${ser.length ? '' : ' Nowe pozycje dostaną pierwszy pomiar przy najbliższym uruchomieniu bota.'}</div>`}
   </div>
   <div class="card" style="margin-top:12px"><div class="tblw"><table class="tbl">
-    <tr><th>Pozycja</th><th>Trend</th><th>1 dzień</th><th>7 dni</th><th>vs śr. 30 dni</th><th>Najtaniej*</th><th>Kup poniżej</th><th>60 dni</th><th></th></tr>
+    <tr><th>Pozycja</th><th>Trend</th><th>1 dzień</th><th>7 dni</th><th>vs śr. 30 dni</th><th>Najtaniej EN/NM</th><th>Kup poniżej</th><th>60 dni</th><th></th></tr>
     ${rows.map(r => `<tr class="click" data-act="detail" data-id="${r.it.id}" data-holo="${r.it.holo ? 1 : ''}">
       <td class="name"><div class="nm">${esc(r.m.name)}${(r.it.qty || 1) > 1 ? ` ×${r.it.qty}` : ''} ${cmA(r.it.id, r.m.name, r.it.holo)}<small>${esc(r.m.set || KIND[r.m.kind] || '')}</small></div></td>
       <td><b>${E(r.p?.trend)}</b></td><td class="${cls(r.d1)}">${PC(r.d1)}</td><td class="${cls(r.d7)}">${PC(r.d7)}</td><td class="${cls(r.v30)}">${PC(r.v30)}</td>
-      <td class="muted">${E(r.p?.low)}</td><td>${r.it.buy_below ? (r.hit ? `<span class="badge good"><span class="dot"></span>${E(r.it.buy_below)}</span>` : E(r.it.buy_below)) : '<span class="muted">—</span>'}</td>
+      <td>${r.en?.min != null ? `<span title="${esc(`${r.en.n || 0} ofert EN/NM z wysyłką do PL · najtańszy: ${r.en.seller || '?'} · pomiar ${new Date(r.en.t).toLocaleString('pl-PL')}`)}">${E(r.en.min)}</span>${r.p?.trend && r.en.min < r.p.trend * 0.85 ? ' 🔎' : ''}` : '<span class="muted">—</span>'}</td><td>${r.it.buy_below ? (r.hit ? `<span class="badge good"><span class="dot"></span>${E(r.it.buy_below)}</span>` : E(r.it.buy_below)) : '<span class="muted">—</span>'}</td>
       <td>${spark(r.sp)}</td><td><button class="btn sm" data-act="edititem" data-k="${esc(keyOf(r.it))}" title="Edytuj">✎</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Pusta lista – dodaj pozycje.</td></tr>'}
-  </table></div><p class="muted" style="font-size:12px;margin:8px 0 0">* najtańsza oferta na Cardmarkecie w dowolnym języku i stanie – zwykle zaniżona względem EN/NM.</p></div>`;
+  </table></div><p class="muted" style="font-size:12px;margin:8px 0 0">${enNote(rows)}</p></div>`;
   if (ser.length >= 2) lineChart($('#c-wl'), labels, [{ label: 'Suma', data: ser.map(r => r[1]), color: css('--s1') }], { target: wl.target_eur || null });
   if (!S.catalog) loadCatalog().then(() => { if (S.tab === 'watch') render(); }).catch(() => {});
+}
+
+function enNote(rows) {
+  const ens = rows.map(r => r.en).filter(e => e?.min != null);
+  if (!ens.length) return `Najtaniej EN/NM: najtańsza oferta po angielsku w stanie NM z wysyłką do Polski. Publiczny cennik Cardmarketu tego nie ma – ceny zbiera skrypt Tampermonkey „Skarbiec – ceny EN/NM” sam, raz na dobę, gdy jesteś na Cardmarkecie. <a href="${CM_EN_REFRESH}" target="_blank" rel="noopener">Sprawdź teraz ↗</a>`;
+  const t = ens.map(e => e.t).sort()[0], sum = ens.reduce((a, e) => a + e.min, 0);
+  return `Najtaniej EN/NM: oferty po angielsku, NM, z wysyłką do Polski (cena bez wysyłki) · ${ens.length}/${rows.length} kart razem ${E(sum)} · sprawdzone ${agoPL(t)}, odświeża się samo raz na dobę przy wizycie na Cardmarkecie · <a href="${CM_EN_REFRESH}" target="_blank" rel="noopener">odśwież teraz ↗</a> · 🔎 = ponad 15% poniżej trendu.`;
 }
 
 // ---------- Portfel ----------
@@ -562,8 +603,8 @@ function rynekResults() {
   const box = $('#rres'); if (!box || !S.catalog) return;
   const c = S.catalog, { rows, total } = searchCatalog(R.q, R);
   box.innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:6px">${total.toLocaleString('pl-PL')} wyników${total > rows.length ? ` · pokazuję ${rows.length}` : ''} · ceny z ${dPL(c.day)}</div>
-  <div class="tblw"><table class="tbl"><tr><th>Produkt</th><th>Trend</th><th>vs śr. 30 dni</th><th>Śr. 7 dni</th><th>Najtaniej*</th></tr>
-  ${rows.map(r => { const ch = pct(r[4], r[8]); return `<tr class="click" data-act="detail" data-id="${r[0]}"><td class="name"><div class="nm">${esc(r[1])}<small>${esc([c.exp[r[3]], KIND[c.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td><b>${E(r[4])}</b></td><td class="${cls(ch)}">${arrow(ch)}${PC(ch)}</td><td>${E(r[7])}</td><td class="muted">${E(r[5])}</td></tr>`; }).join('') || '<tr><td colspan="5" class="empty">Nic nie znaleziono.</td></tr>'}
+  <div class="tblw"><table class="tbl"><tr><th>Produkt</th><th>Trend</th><th>vs śr. 30 dni</th><th>Śr. 7 dni</th></tr>
+  ${rows.map(r => { const ch = pct(r[4], r[8]); return `<tr class="click" data-act="detail" data-id="${r[0]}"><td class="name"><div class="nm">${esc(r[1])}<small>${esc([c.exp[r[3]], KIND[c.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td><b>${E(r[4])}</b></td><td class="${cls(ch)}">${arrow(ch)}${PC(ch)}</td><td>${E(r[7])}</td></tr>`; }).join('') || '<tr><td colspan="4" class="empty">Nic nie znaleziono.</td></tr>'}
   </table></div>`;
 }
 
@@ -879,7 +920,7 @@ async function openDetail(id, holo) {
     <div class="grid g2" style="gap:16px">
       <dl class="kv">
         <dt>Trend</dt><dd>${E(p.trend)}</dd><dt>Średnia 1 dzień</dt><dd>${E(p.avg1)}</dd><dt>Średnia 7 dni</dt><dd>${E(p.avg7)}</dd><dt>Średnia 30 dni</dt><dd>${E(p.avg30)}</dd>
-        <dt>Najtańsza oferta*</dt><dd>${E(p.low)}</dd><dt>Trend vs 30 dni</dt><dd class="${cls(pct(p.trend, p.avg30))}">${PC(pct(p.trend, p.avg30))}</dd>
+        ${enOf(it)?.min != null ? `<dt>Najtaniej EN/NM</dt><dd title="pomiar ${esc(new Date(enOf(it).t).toLocaleString('pl-PL'))}">${E(enOf(it).min)} <small class="muted">${agoPL(enOf(it).t)}</small></dd>` : ''}<dt>Trend vs 30 dni</dt><dd class="${cls(pct(p.trend, p.avg30))}">${PC(pct(p.trend, p.avg30))}</dd>
         <dt>W złotówkach</dt><dd>${P(p.trend * fxNow())}</dd>
         ${!holo && r && r[9] ? `<dt>Reverse Holo – trend</dt><dd>${E(r[9])}</dd>` : ''}
       </dl>
@@ -887,8 +928,7 @@ async function openDetail(id, holo) {
         ${!holo && r && r[9] ? '<button class="btn" data-act="d-holo">Pokaż wersję Reverse Holo</button>' : ''}
         ${cmUrl ? `<a class="btn" style="text-align:center;text-decoration:none" href="${esc(cmUrl)}" target="_blank" rel="noopener">Otwórz na Cardmarket ↗</a>` : ''}</div>
     </div>
-    <h3 style="margin-top:18px">Historia ceny</h3><div id="d-hist"><span class="spin"></span> Ładuję…</div>
-    <p class="muted" style="font-size:12px">* w dowolnym języku i stanie.</p>`, async d => {
+    <h3 style="margin-top:18px">Historia ceny</h3><div id="d-hist"><span class="spin"></span> Ładuję…</div>`, async d => {
     d.addEventListener('click', e => {
       const a = e.target.closest('[data-act]'); if (!a) return;
       if (a.dataset.act === 'd-watch') { e.stopPropagation(); d.close(); formAddWatch(it); }
@@ -1167,6 +1207,8 @@ async function unlock(pw, remember) {
   S.market ||= { h: {}, fx: {}, pv: [], alerts: [], state: {} };
   shell();
   loadCatalog().then(() => { if (S.tab !== 'rynek') render(); }).catch(() => {});
+  loadEN().then(() => { if (S.en?.size && ['watch', 'portfel'].includes(S.tab)) render(); });
+  loadCatalog().catch(() => {}).then(syncTargets);
 }
 
 (async function start() {

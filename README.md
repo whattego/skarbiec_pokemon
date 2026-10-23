@@ -67,6 +67,13 @@ Od teraz bot działa sam codziennie rano (i zapasowo po południu).
 
 Klucz zostaje tylko w tej przeglądarce (jak token GitHub). Na telefonie wklej go raz, w Ustawieniach na telefonie.
 
+### 8. Ceny EN/NM (opcjonalnie, 2 minuty)
+Publiczny cennik Cardmarketu ma tylko ceny ze wszystkich języków. Prawdziwe najtańsze oferty **po angielsku, NM, z wysyłką do Polski** zbiera skrypt Tampermonkey:
+1. Tampermonkey → **Utwórz nowy skrypt** → wklej całą treść pliku `tampermonkey/skarbiec_en.user.js` → **Zapisz**.
+2. Otwórz raz stronę Skarbca w tej samej przeglądarce. Skrypt sam weźmie z niej token i nazwę prywatnego repo, niczego nie wpisujesz.
+3. Od teraz raz na dobę, gdy wejdziesz na dowolną stronę Cardmarketu (zalogowany), skrypt w tle sprawdzi ceny kart z twoich watchlist i portfela. Trwa to ok. 3 s na kartę, a w lewym dolnym rogu widać postęp. Zamknięcie karty przerywa sprawdzanie, a skrypt dokończy przy następnej wizycie.
+4. W Skarbcu kolumna **Najtaniej EN/NM**. Link „odśwież teraz ↗” pod tabelą wymusza sprawdzenie od razu.
+
 ## Jak używać
 - **Watchlisty:** import z Tampermonkey (tryb `#track` → przycisk 🤖) albo dodawanie z wyszukiwarki.
   - Próg okazji dla całej listy: np. SIR-y poniżej 1500 €.
