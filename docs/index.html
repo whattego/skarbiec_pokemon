@@ -643,13 +643,9 @@ async function resolveCard(c) {
   return out.some(x => x.idp) ? out.filter(x => x.idp) : out;
 }
 function cmLink(id, fallbackName, holo) {
-  // 1) dokładny adres strony karty zapisany przy imporcie z Tampermonkey
-  const known = [...(S.vault?.watchlists || []).flatMap(w => w.items || []), ...(S.vault?.portfolio || [])].find(x => +x.id === +id && x.url && (holo == null || !!x.holo === !!holo));
-  if (known) return known.url;
-  // 2) Cardmarket nie ma linku po idProduct – wyszukiwarka po nazwie (+ dodatek, jeśli strona go uwzględni)
-  const r = catRow(id), name = (r ? r[1] : /^Produkt #/.test(fallbackName || '') ? '' : fallbackName || '').replace(/\s*\[.*?\]\s*/g, ' ').replace(/\(V\.\d+\)/, '').trim();
-  if (!name) return null;
-  return `https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=${encodeURIComponent(name)}${r?.[3] ? `&idExpansion=${r[3]}` : ''}`;
+  // Cardmarket przekierowuje /Products?idProduct=X na dokładną stronę produktu (sprawdzone 23.10.2026); filtr EN, NM i lepsze
+  if (!(+id > 0)) return null;
+  return `https://www.cardmarket.com/en/Pokemon/Products?idProduct=${+id}&language=1&minCondition=2${holo ? '&isReverseHolo=Y' : ''}`;
 }
 const cmA = (id, name, holo) => { const u = cmLink(id, name, holo); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener" title="Otwórz na Cardmarket" onclick="event.stopPropagation()">↗</a>` : ''; };
 const scPrice = (card, holo) => { const r = catRow(card?.idp); return r ? (holo ? r[9] || r[4] : r[4]) : null; };
