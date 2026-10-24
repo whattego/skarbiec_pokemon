@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Skarbiec – ceny EN/NM z Cardmarketu (automatycznie)
 // @namespace    itmate.skarbiec-en
-// @version      1.4
+// @version      1.5
 // @description  Sprawdza najtańsze oferty EN/NM z wysyłką do PL dla kart z twojego Skarbca (watchlisty + portfel) i zapisuje je w prywatnym repo. Uruchamiasz przyciskiem „Uaktualnij ceny EN/NM” w Skarbcu (otwiera na chwilę kartę Cardmarketu); działa też samo przy wizycie na Cardmarkecie, gdy ceny mają ponad 20 h.
 // @match        https://www.cardmarket.com/*
 // @match        https://*.github.io/*
@@ -11,6 +11,7 @@
 // @grant        GM_addValueChangeListener
 // @grant        GM_registerMenuCommand
 // @connect      api.github.com
+// @connect      product-images.s3.cardmarket.com
 // @run-at       document-idle
 // @noframes
 // @downloadURL  https://whattego.github.io/skarbiec_pokemon/skarbiec_en.user.js
@@ -20,12 +21,12 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.4';
+  const VERSION = '1.5';
   const EVERY_H = 20;            // jak często odświeżać samo przy wizycie na Cardmarkecie (godziny)
   const MAX_CARDS = 150;         // maks. kart na jedno odświeżenie
   const HISTORY_MAX = 400;       // ile pomiarów trzymać w en/history.json
   const FILTER = 'language=1&minCondition=2';   // EN, NM lub lepszy
-  const CFG = 'sk_cfg', LAST = 'sk_en_last', LOCK = 'sk_en_lock', STATUS = 'sk_en_status';
+  const CFG = 'sk_cfg', LAST = 'sk_en_last', LOCK = 'sk_en_lock', STATUS = 'sk_en_status', IMGS = 'sk_en_imgs';   // IMGS: idProduct -> ścieżka zdjęcia w prywatnym repo
   // Cloudflare Cardmarketu odrzuca (403) zapytania spoza karty cardmarket.com – dlatego oferty pobieramy tylko na karcie Cardmarketu,
   // a Skarbiec otwiera ją przyciskiem (adres z #skarbiec-en-auto: karta zamyka się sama po zakończeniu)
 
@@ -122,8 +123,9 @@
       const tr = await gh('GET', '/contents/en/targets.json', null, true);
       if (tr.status === 404) return report('warn', 'brak listy kart – dodaj coś do watchlisty albo portfela w Skarbcu.', 9000);
       const targets = (JSON.parse(tr.responseText).items || []).slice(0, MAX_CARDS);
-      const items = {};
+      const items = {}, imgs = GM_getValue(IMGS, {}), needImg = [];
       let n = 0, stop = '';
+      running = true;
       for (const t of targets) {
         n++; GM_setValue(LOCK, Date.now());
         report('run', `sprawdzam ceny EN/NM: ${n}/${targets.length}…`);
@@ -138,11 +140,25 @@
         const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
         if (isChallenge(doc.title)) { stop = 'Cardmarket prosi o weryfikację'; break; }
         const offers = readOffers(doc, t.holo), top3 = offers.slice(0, 3);
+        const imgUrl = doc.querySelector('meta[property="og:image"]')?.content || '';
+        if (/product-images\.s3\.cardmarket\.com/.test(imgUrl) && !imgs[t.id]) needImg.push({ id: t.id, url: imgUrl });
         items[`${t.id}${t.holo ? 'h' : ''}`] = {
           min: offers[0]?.price ?? null, avg3: top3.length ? +(top3.reduce((a, o) => a + o.price, 0) / top3.length).toFixed(2) : null,
-          n: offers.length, seller: offers[0]?.seller || '', name: t.name || '',
+          n: offers.length, seller: offers[0]?.seller || '', name: t.name || '', ...(imgs[t.id] ? { img: imgs[t.id] } : {}),
         };
         if (n < targets.length) await pause();
+      }
+      // zdjęcia kart: serwer zdjęć Cardmarketu nie pokazuje ich poza cardmarket.com, więc raz na kartę kopiujemy je do prywatnego repo
+      for (const [i, x] of needImg.entries()) {
+        report('run', `zapisuję zdjęcia kart: ${i + 1}/${needImg.length}…`);
+        try {
+          const b64 = await imgB64(x.url);
+          const path = `img/${x.id}.jpg`;
+          const cur = await gh('GET', `/contents/${path}`);
+          await gh('PUT', `/contents/${path}`, { message: `zdjęcie karty ${x.id}`, content: b64, ...(cur.status === 200 ? { sha: JSON.parse(cur.responseText).sha } : {}) });
+          imgs[x.id] = path; GM_setValue(IMGS, imgs);
+          for (const k of [String(x.id), `${x.id}h`]) if (items[k]) items[k].img = path;
+        } catch (e) { console.warn('[Skarbiec] zdjęcie', x.id, e.message); }
       }
       const keys = Object.keys(items);
       if (keys.length) {
@@ -161,9 +177,29 @@
     } catch (e) {
       report('err', '⚠️ ' + e.message, 12000);
     } finally {
+      running = false;
       GM_setValue(LOCK, 0);
       if (autoTab && done) setTimeout(() => window.close(), 2500);   // kartę otworzył Skarbiec – zamknij po sukcesie
     }
+  }
+  // zamknięta karta w trakcie sprawdzania: zwolnij blokadę i powiedz Skarbcowi, żeby nie czekał w nieskończoność
+  let running = false;
+  window.addEventListener('pagehide', () => {
+    if (!running) return;
+    GM_setValue(LOCK, 0);
+    GM_setValue(STATUS, { state: 'err', text: 'przerwano – karta Cardmarketu została zamknięta. Kliknij „Uaktualnij” jeszcze raz.', t: Date.now() });
+  });
+  function imgB64(url) {   // zdjęcie z serwera Cardmarketu (wymaga nagłówka Referer z cardmarket.com)
+    return new Promise((res, rej) => GM_xmlhttpRequest({
+      method: 'GET', url, responseType: 'arraybuffer', timeout: 30000, headers: { Referer: 'https://www.cardmarket.com/' },
+      onload: r => {
+        if (r.status !== 200 || !r.response?.byteLength) return rej(new Error('HTTP ' + r.status));
+        const u8 = new Uint8Array(r.response); let s = '';
+        for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+        res(btoa(s));
+      },
+      onerror: () => rej(new Error('brak połączenia')), ontimeout: () => rej(new Error('timeout')),
+    }));
   }
 
   GM_registerMenuCommand('Skarbiec: odśwież ceny EN/NM teraz', () => refresh(true));

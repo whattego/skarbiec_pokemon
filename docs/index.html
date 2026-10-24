@@ -134,6 +134,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .phgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
 .ph{border:0;padding:0;background:none;cursor:pointer;text-align:left;font-size:11px;color:var(--muted)}
 .ph img{width:100%;aspect-ratio:3/4}
+[data-pimg]{cursor:zoom-in}
 @media (max-width:560px){.job{grid-template-columns:64px 1fr}.job>img{width:64px}}
 @media (prefers-reduced-motion:reduce){.spin{animation:none}}
 </style>
@@ -253,7 +254,10 @@ async function loadEN() {
     const all = await GH.call('/contents/en', {}, PHOTOS.repo).catch(e => { if (/ 404/.test(e.message)) return []; throw e; });
     if (all.some(f => f.name === 'history.json'))
       S.enHist = (await GH.call('/contents/en/history.json', { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null))?.h || [];
-    const files = all.filter(f => f.name.endsWith('.json') && !['targets.json', 'history.json'].includes(f.name));
+    // opt_<idListy>.json = wynik optymalizatora (komplet z wysyłką) – osobno, nie są cenami pojedynczych kart
+    const optFiles = all.filter(f => /^opt_.*\.json$/.test(f.name));
+    S.opt = (await Promise.all(optFiles.map(f => GH.call(`/contents/en/${encodeURIComponent(f.name)}`, { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null)))).filter(Boolean);
+    const files = all.filter(f => f.name.endsWith('.json') && !['targets.json', 'history.json'].includes(f.name) && !/^opt_/.test(f.name));
     const docs = await Promise.all(files.map(f => GH.call(`/contents/en/${encodeURIComponent(f.name)}`, { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null)));
     const m = new Map();
     for (const d of docs.filter(Boolean)) for (const [k, v] of Object.entries(d.items || {})) {
@@ -298,6 +302,39 @@ document.addEventListener('skarbiec-en-status', () => {
   if (S.enStatus?.state === 'ok') loadEN().then(() => render());
   else { const el = $('#en-status'); if (el) el.outerHTML = enStatusHTML(); }
 });
+// strażnik: brak wieści z karty Cardmarketu przez 60 s (zamknięta, uśpiona) → odblokuj przycisk zamiast wisieć na „sprawdzam…”
+setInterval(() => {
+  if (S.enStatus?.state === 'run' && Date.now() - (S.enStatus.t || 0) > 60e3) {
+    S.enStatus = { state: 'err', text: 'przerwano – karta Cardmarketu nie odpowiada (zamknięta?). Kliknij „Uaktualnij” jeszcze raz.', t: Date.now() };
+    if (S.tab === 'watch') render();
+  }
+}, 5000);
+
+// zdjęcie karty po najechaniu na nazwę: skaner (TCGdex) → zdjęcie z Cardmarketu skopiowane przez skrypt do prywatnego repo → własne zdjęcie z portfela
+async function itemImgSrc(key) {
+  const all = [...(S.vault?.watchlists || []).flatMap(w => w.items || []), ...(S.vault?.portfolio || [])].filter(x => keyOf(x) === key);
+  const direct = all.find(x => x.img)?.img;
+  if (direct) return direct;
+  const repoPath = S.en?.get(key)?.img || S.en?.get(key.replace(/h$/, ''))?.img || all.find(x => x.photos?.length)?.photos[0];
+  return repoPath ? PHOTOS.url(repoPath) : null;
+}
+let pimgEl = null, pimgKey = null;
+document.addEventListener('mouseover', async e => {
+  const t = e.target.closest?.('[data-pimg]');
+  if (!t) { if (pimgEl) { pimgEl.remove(); pimgEl = null; pimgKey = null; } return; }
+  const key = t.dataset.pimg; if (key === pimgKey) return;
+  pimgKey = key;
+  const src = await itemImgSrc(key).catch(() => null);
+  if (!src || pimgKey !== key) return;
+  pimgEl ||= Object.assign(document.createElement('img'), { alt: '' });
+  pimgEl.style.cssText = 'position:fixed;z-index:200;width:220px;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.45);pointer-events:none;background:var(--surface-2)';
+  pimgEl.src = src; document.body.appendChild(pimgEl);
+  const r = t.getBoundingClientRect(), h = 310;
+  pimgEl.style.left = Math.min(r.left, innerWidth - 232) + 'px';
+  pimgEl.style.top = (r.bottom + 8 + h > innerHeight ? Math.max(8, r.top - h - 8) : r.bottom + 8) + 'px';
+});
+document.addEventListener('scroll', () => { if (pimgEl) { pimgEl.remove(); pimgEl = null; pimgKey = null; } }, true);
+
 function enStatusHTML() {
   const s = S.enStatus; if (!s) return '<span id="en-status"></span>';
   const col = { run: 'muted', ok: 'up', warn: '', err: 'down' }[s.state] ?? 'muted';
@@ -522,6 +559,13 @@ function vWatch(v) {
   const labels = [...new Set([...ser.map(r => r[0]), ...enSer.map(r => r[0])])].sort();
   const now = ser.at(-1)?.[1] ?? items.reduce((a, it) => a + (nowPrice(it)?.trend || 0) * (it.qty || 1), 0);
   const enNow = items.length && items.every(it => enOf(it)?.min != null) ? items.reduce((a, it) => a + enOf(it).min * (it.qty || 1), 0) : null;
+  // komplet z wysyłką: wynik optymalizatora dla Wants Listy o tym samym składzie (te same idProduct)
+  const ids = new Set(items.map(it => +it.id));
+  const opt = (S.opt || []).filter(o => o.ids?.length === ids.size && o.ids.every(id => ids.has(+id))).sort((a, b) => a.t < b.t ? 1 : -1)[0] || null;
+  const optSer = opt ? [...(opt.hist || []).reduce((m, [t, v]) => { const d = new Date(t).toLocaleDateString('sv-SE'); m.set(d, Math.min(m.get(d) ?? Infinity, v)); return m; }, new Map())].sort((a, b) => a[0] < b[0] ? -1 : 1) : [];
+  for (const [d] of optSer) if (!labels.includes(d)) labels.push(d);
+  labels.sort();
+  const buyNow = opt?.total ?? null;   // to porównujemy z progiem okazji
   const back = n => ser.filter(([d]) => d <= addDays(ser.at(-1)?.[0] || '', -n)).at(-1)?.[1];
   const peak = ser.length ? Math.max(...ser.map(r => r[1])) : null;
   const avg30sum = items.every(it => nowPrice(it)?.avg30) ? items.reduce((a, it) => a + nowPrice(it).avg30 * (it.qty || 1), 0) : null;
@@ -538,17 +582,17 @@ function vWatch(v) {
       <div class="row"><button class="btn sm primary" data-act="enRefresh" ${S.enStatus?.state === 'run' ? 'disabled' : ''}>🔄 Uaktualnij ceny EN/NM</button><button class="btn sm" data-act="addto" data-mode="watch">+ Dodaj pozycję</button><button class="btn sm" data-act="editwl">Ustawienia listy</button><button class="btn sm" data-act="exportwl">Kopiuj JSON</button></div></div>
     <div style="text-align:right;margin-top:4px">${enStatusHTML()}</div>
     <div class="grid g4" style="margin:14px 0">
-      <div class="stat"><div class="lbl">Najtaniej EN/NM razem</div><div class="val">${E(enNow)}</div><div class="note">${enNow != null ? `≈ ${P(enNow * fxNow())} · bez wysyłki` : 'kliknij „Uaktualnij ceny EN/NM”'}</div></div>
+      <div class="stat"><div class="lbl">Komplet EN/NM z wysyłką</div><div class="val">${E(buyNow)}</div><div class="note">${opt ? `${opt.sellers} paczek · same karty ${E(opt.cards)} · liczone ${agoPL(opt.t)}${opt.verified ? '' : ' · część wysyłek z tabeli'}` : `same karty: ${E(enNow)}${enNow != null ? ' bez wysyłki' : ''} · wysyłkę policzy optymalizator Cardmarketu`}</div></div>
       <div class="stat"><div class="lbl">Suma wg trendu</div><div class="val">${E(now)}</div><div class="note">≈ ${P(now * fxNow())} · wszystkie języki</div></div>
       <div class="stat"><div class="lbl">Zmiana 7 dni</div><div class="val ${cls(pct(now, back(7)))}">${PC(pct(now, back(7)))}</div><div class="note">30 dni: ${PC(pct(now, back(30)))} · vs śr. 30 dni: ${PC(pct(now, avg30sum))}</div></div>
-      <div class="stat"><div class="lbl">Próg okazji</div><div class="val">${wl.target_eur ? E(wl.target_eur) : '—'}</div><div class="note">${wl.target_eur ? (enNow != null ? (enNow <= wl.target_eur ? '<span class="badge good"><span class="dot"></span>EN/NM poniżej progu</span>' : `EN/NM brakuje ${E(enNow - wl.target_eur)}`) : !(now > 0) ? 'brak cen' : now <= wl.target_eur ? '<span class="badge good"><span class="dot"></span>trend poniżej progu</span>' : `trend: brakuje ${E(now - wl.target_eur)}`) : '<a href="#" data-act="editwl">ustaw próg</a>'}</div></div>
+      <div class="stat"><div class="lbl">Próg okazji</div><div class="val">${wl.target_eur ? E(wl.target_eur) : '—'}</div><div class="note">${wl.target_eur ? ((buyNow ?? enNow) != null ? ((buyNow ?? enNow) <= wl.target_eur ? `<span class="badge good"><span class="dot"></span>${buyNow != null ? 'komplet z wysyłką' : 'EN/NM'} poniżej progu</span>` : `${buyNow != null ? 'komplet z wysyłką' : 'EN/NM'}: brakuje ${E((buyNow ?? enNow) - wl.target_eur)}`) : !(now > 0) ? 'brak cen' : now <= wl.target_eur ? '<span class="badge good"><span class="dot"></span>trend poniżej progu</span>' : `trend: brakuje ${E(now - wl.target_eur)}`) : '<a href="#" data-act="editwl">ustaw próg</a>'}</div></div>
     </div>
-    ${labels.length >= 2 || enSer.length ? legend([['Najtaniej EN/NM razem', css('--s3')], ['Suma wg trendu', css('--s1')], ...(wl.target_eur ? [['Próg okazji', css('--s4'), true]] : [])]) + '<div class="chart"><canvas id="c-wl"></canvas></div>' : `<div class="banner">📈 Wykres pojawi się po drugim pomiarze bota albo po pierwszym „Uaktualnij ceny EN/NM”.</div>`}
+    ${labels.length >= 2 || enSer.length || optSer.length ? legend([...(optSer.length ? [['Komplet EN/NM z wysyłką (najtaniej w dniu)', css('--s2')]] : []), ['Same karty EN/NM', css('--s3')], ['Suma wg trendu', css('--s1')], ...(wl.target_eur ? [['Próg okazji', css('--s4'), true]] : [])]) + '<div class="chart"><canvas id="c-wl"></canvas></div>' : `<div class="banner">📈 Wykres pojawi się po drugim pomiarze bota albo po pierwszym „Uaktualnij ceny EN/NM”.</div>`}
   </div>
   <div class="card" style="margin-top:12px"><div class="tblw"><table class="tbl">
     <tr><th>Pozycja</th><th>Trend</th><th>1 dzień</th><th>7 dni</th><th>vs śr. 30 dni</th><th>Najtaniej EN/NM</th><th>Kup poniżej</th><th>60 dni</th><th></th></tr>
     ${rows.map(r => `<tr class="click" data-act="detail" data-id="${r.it.id}" data-holo="${r.it.holo ? 1 : ''}">
-      <td class="name"><div class="nm">${esc(r.m.name)}${(r.it.qty || 1) > 1 ? ` ×${r.it.qty}` : ''} ${cmA(r.it.id, r.m.name, r.it.holo)}<small>${esc(r.m.set || KIND[r.m.kind] || '')}</small></div></td>
+      <td class="name"><div class="nm"><span data-pimg="${esc(keyOf(r.it))}">${esc(r.m.name)}</span>${(r.it.qty || 1) > 1 ? ` ×${r.it.qty}` : ''} ${cmA(r.it.id, r.m.name, r.it.holo)}<small>${esc(r.m.set || KIND[r.m.kind] || '')}</small></div></td>
       <td><b>${E(r.p?.trend)}</b></td><td class="${cls(r.d1)}">${PC(r.d1)}</td><td class="${cls(r.d7)}">${PC(r.d7)}</td><td class="${cls(r.v30)}">${PC(r.v30)}</td>
       <td>${r.en?.min != null ? `<span title="${esc(`${r.en.n || 0} ofert EN/NM z wysyłką do PL · najtańszy: ${r.en.seller || '?'} · pomiar ${new Date(r.en.t).toLocaleString('pl-PL')}`)}">${E(r.en.min)}</span>${r.p?.trend && r.en.min < r.p.trend * 0.85 ? ' 🔎' : ''}` : '<span class="muted">—</span>'}</td><td>${r.it.buy_below ? (r.hit ? `<span class="badge good"><span class="dot"></span>${E(r.it.buy_below)}</span>` : E(r.it.buy_below)) : '<span class="muted">—</span>'}</td>
       <td>${spark(r.sp)}</td><td><button class="btn sm" data-act="edititem" data-k="${esc(keyOf(r.it))}" title="Edytuj">✎</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Pusta lista – dodaj pozycje.</td></tr>'}
@@ -556,7 +600,8 @@ function vWatch(v) {
   if ($('#c-wl')) {
     const at = (s, d) => s.find(r => r[0] === d)?.[1] ?? null;
     lineChart($('#c-wl'), labels, [
-      { label: 'EN/NM', data: labels.map(d => at(enSer, d)), color: css('--s3') },
+      ...(optSer.length ? [{ label: 'Komplet z wysyłką', data: labels.map(d => at(optSer, d)), color: css('--s2') }] : []),
+      { label: 'Same karty EN/NM', data: labels.map(d => at(enSer, d)), color: css('--s3') },
       { label: 'Trend', data: labels.map(d => at(ser, d)), color: css('--s1') }], { target: wl.target_eur || null });
   }
   if (!S.catalog) loadCatalog().then(() => { if (S.tab === 'watch') render(); }).catch(() => {});
@@ -585,14 +630,15 @@ function vPortfel(v) {
   <div class="card" style="margin-top:12px"><h2>Wartość w czasie</h2>
     ${(S.market?.pv || []).length >= 2 ? legend([['Wartość', css('--s1')], ['Koszt zakupu', css('--muted'), true]]) + '<div class="chart"><canvas id="c-pf"></canvas></div>' : '<div class="banner">📈 Wykres pojawi się po dwóch dniach pomiarów bota.</div>'}</div>
   <div class="card" style="margin-top:12px"><h2>Pozycje</h2><div class="tblw"><table class="tbl">
-    <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
+    <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Najtaniej EN/NM / szt.</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
     ${pf.active.sort((a, b) => (b.value || 0) - (a.value || 0)).map(r => `<tr>
-      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}">${esc(r.m.name)} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set || KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
+      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span> ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set || KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
       <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
+      <td>${enOf(r.h)?.min != null ? `${E(enOf(r.h).min)}<br><small class="muted">≈ ${P(enOf(r.h).min * fxNow())}</small>` : '<span class="muted">—</span>'}</td>
       <td class="${cls(r.plp)}">${r.pl != null ? `${r.pl >= 0 ? '+' : '−'}${P(Math.abs(r.pl))}<br><small>${PC(r.plp)}</small>` : '—'}</td>
       <td class="${cls(r.d7)}">${PC(r.d7)}</td>
       <td>${r.free ? (r.free <= today ? '<span class="badge good"><span class="dot"></span>już teraz</span>' : `<span class="badge warn"><span class="dot"></span>${dPL(r.free)}</span>`) : '—'}</td>
-      <td><div class="row" style="justify-content:flex-end;flex-wrap:nowrap"><button class="btn sm" data-act="sell" data-uid="${r.h.uid}">Sprzedaj</button><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}" title="Edytuj">✎</button></div></td></tr>`).join('') || '<tr><td colspan="8" class="empty">Portfel jest pusty. Dodaj karty i sealed, które już masz – z ceną i datą zakupu.</td></tr>'}
+      <td><div class="row" style="justify-content:flex-end;flex-wrap:nowrap"><button class="btn sm" data-act="sell" data-uid="${r.h.uid}">Sprzedaj</button><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}" title="Edytuj">✎</button></div></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Portfel jest pusty. Dodaj karty i sealed, które już masz – z ceną i datą zakupu.</td></tr>'}
   </table></div></div>
   ${pf.sold.length ? `<div class="card" style="margin-top:12px"><h2>Sprzedane</h2><div class="tblw"><table class="tbl"><tr><th>Pozycja</th><th>Koszt</th><th>Sprzedaż</th><th>Zysk</th><th>Data</th><th></th></tr>
     ${pf.sold.map(r => { const g = (+r.h.sold.price_pln || 0) - r.cost; return `<tr><td class="name"><div class="nm">${esc(r.m.name)}<small>${r.h.qty || 1} szt.</small></div></td><td>${P(r.cost)}</td><td>${P(+r.h.sold.price_pln)}</td><td class="${cls(g)}">${g >= 0 ? '+' : '−'}${P(Math.abs(g))}</td><td>${dPL(r.h.sold.date)}${r.free && r.h.sold.date < r.free ? '<br><small class="down">przed upływem 6 mies.</small>' : ''}</td><td><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}">✎</button></td></tr>`; }).join('')}</table></div>
@@ -952,7 +998,7 @@ async function scApprove() {
   const recs = sel.map(({ j, c, card }) => {
     const r = catRow(card.idp);
     return { uid: uid(), id: card.idp, holo: !!c.holo, name: r ? r[1] : card.name, set: (r && S.catalog.exp[r[3]]) || card.set, kind: 'S',
-      qty: c.qty, date: SC.date, cost_pln: +(+c.cost || 0).toFixed(2), note: `${card.set} ${card.no}`.trim(), sold: null, tcgdex: card.tid, ...(j.photo ? { photos: [j.photo] } : {}) };
+      qty: c.qty, date: SC.date, cost_pln: +(+c.cost || 0).toFixed(2), note: `${card.set} ${card.no}`.trim(), sold: null, tcgdex: card.tid, ...(card.img ? { img: card.img } : {}), ...(j.photo ? { photos: [j.photo] } : {}) };
   });
   const scans = new Map();
   for (const { j } of sel) if (j.photo) scans.set(j.photo, { path: j.photo, date: todayISO(), n: j.cards.length });
@@ -1270,7 +1316,7 @@ const ACT = {
     // skrypt sprawdza ceny, karta zamyka się sama, a postęp przychodzi tutaj (zdarzenie skarbiec-en-status)
     const w = window.open('', '_blank');
     if (!w) return toast('Przeglądarka zablokowała nową kartę – zezwól na wyskakujące okna dla tej strony.', 6000);
-    S.enStatus = { state: 'run', text: 'otwieram Cardmarket w nowej karcie…' }; render();
+    S.enStatus = { state: 'run', text: 'otwieram Cardmarket w nowej karcie…', t: Date.now() }; render();
     await syncTargets();
     w.location.href = CM_EN_AUTO;
   },
