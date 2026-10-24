@@ -1025,7 +1025,7 @@ async function dropPhotos(paths, why) {   // usuń pliki, na które nic już nie
 // Pozycje tracą `photos`/`crop`, a pliki, na które nie wskazuje już żadna droższa karta (np. strona segregatora), są usuwane.
 async function bulkPhotoClean() {
   if (S.readOnly) return toast('Tryb tylko do odczytu – dodaj token GitHub w Ustawieniach.', 4500);
-  const rows = holdingsCalc().active.filter(r => isBulk(r) && (r.h.photos?.length || r.h.crop));
+  const rows = holdingsCalc().active.filter(r => isBulk(r) && !r.h.verify && (r.h.photos?.length || r.h.crop));   // karty do weryfikacji – zdjęcia zostają
   if (!rows.length) return toast(`Żadna karta poniżej ${String(bulkMin()).replace('.', ',')} € nie ma własnego zdjęcia.`, 4000);
   const paths = [...new Set(rows.flatMap(r => [...(r.h.photos || []), r.h.crop].filter(Boolean)))];
   if (!confirm(`Usunąć własne zdjęcia i wycinki ${rows.length} kart bulk (poniżej ${String(bulkMin()).replace('.', ',')} €)?\n\nZdjęcia, na których są też droższe karty, zostaną. Karty zostają w portfelu z obrazkiem z TCGdex/Cardmarketu.`)) return;
@@ -1639,7 +1639,14 @@ async function savePhotoNow(j) {
   scQueue();
 }
 // karta ze skanera poniżej progu bulk (z ceną z cennika; bez dopasowania/ceny – nie wiadomo, więc nie bulk)
-function scIsBulk(c) { const p = scPrice(c.cands[c.sel], c.holo); return bulkMin() > 0 && p != null && p < bulkMin(); }
+// PEWNY bulk = bez własnego zdjęcia i wycinka: jednoznaczna karta (nie „do weryfikacji”, jedna wersja albo potwierdzona numerem),
+// wyraźny odczyt i znana cena < progu. Przy jakiejkolwiek niepewności zdjęcie zostaje – usuwasz je później przyciskiem
+// „Usuń moje zdjęcia kart bulk”, gdy wersja jest już pewna (decyzja użytkownika 24.10.2026).
+function scIsBulk(c) {
+  const k = c.cands[c.sel]; if (!k || !(bulkMin() > 0)) return false;
+  if (k.verify || (c.cands.length > 1 && !k.exact) || c.det.confidence !== 'high') return false;
+  const p = scPrice(k, c.holo); return p != null && p < bulkMin();
+}
 function scPump() {
   for (const j of SC.jobs) { if (SC.busy >= 2) break; if (j.status === 'czeka') { SC.busy++; scanJob(j).finally(() => { SC.busy--; scPump(); }); } }
 }
