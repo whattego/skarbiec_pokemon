@@ -1080,6 +1080,8 @@ const bulkMin = () => +({ ...DEFAULT_SETTINGS, ...(S.vault?.settings || {}) }).t
 // bulk wg tej samej kwoty, którą widać w portfelu (za sztukę, €): karta do weryfikacji liczy się po minimum z możliwych wersji
 const isBulk = r => { if (!(bulkMin() > 0) || r.graded || r.value == null) return false; return r.value / (r.h.qty || 1) / fxNow() < bulkMin(); };
 const pfSort = () => ls.get('skarbiec_pf_sort') || 'name';
+const pfCSort = () => ls.get('skarbiec_pf_csort') || 'no';   // pozycje w grupie: numer karty / alfabet / średnia za szt. / najtańsza NM za szt.
+const nmUnit = r => { const e = enOf(r.h)?.min; return e != null && !nmWhy(r) ? e * fxNow() : null; };
 const pfClosed = () => { try { return new Set(JSON.parse(ls.get('skarbiec_pf_closed') || '[]')); } catch { return new Set(); } };
 const cardNoKey = r => (S.cmnums?.[r.h.id]?.[1] || String(r.h.no || '').split('/')[0] || '').toUpperCase();   // „030”, „TG23”
 // wyszukiwarka w Portfelu: nazwa (jak na Cardmarkecie, z kodem i numerem), dodatek, numer z karty, notatka; wszystkie słowa muszą pasować
@@ -1092,7 +1094,7 @@ function pfGroups(rows) {
   const closed = pfClosed(), map = new Map();
   const BULK = `Bulk – karty poniżej ${String(bulkMin()).replace('.', ',')} €`;
   for (const r of rows) {
-    const set = isBulk(r) ? BULK : r.m.set || KIND[r.m.kind] || 'Bez dodatku';
+    const set = isBulk(r) ? BULK : pfSort() === 'flat' ? 'Wszystkie pozycje' : r.m.set || KIND[r.m.kind] || 'Bez dodatku';
     if (!map.has(set)) map.set(set, { set, bulk: set === BULK, rows: [], value: 0, cost: 0, n: 0, ns: 0, last: '' });
     const g = map.get(set);
     g.rows.push(r); g.value += r.value || 0; g.cost += r.cost;
@@ -1104,7 +1106,11 @@ function pfGroups(rows) {
   for (const g of gs) {
     g.open = S.pfQ ? true : g.bulk ? closed.has('+bulk') : !closed.has(g.set);   // bulk domyślnie zwinięty; przy wyszukiwaniu wszystko rozwinięte
     g.lang = g.rows.every(r => r.h.lang === 'ja') ? 'JP' : '';
-    g.rows.sort((a, b) => coll.compare(cardNoKey(a), cardNoKey(b)) || coll.compare(a.m.name, b.m.name));
+    const cs = pfCSort(), unit = r => (r.value || 0) / (r.h.qty || 1), byName = (a, b) => coll.compare(baseName(a.m.name), baseName(b.m.name));
+    g.rows.sort(cs === 'name' ? (a, b) => byName(a, b) || coll.compare(cardNoKey(a), cardNoKey(b))
+      : cs === 'avg' ? (a, b) => unit(b) - unit(a) || byName(a, b)
+      : cs === 'nm' ? (a, b) => (nmUnit(b) ?? -1) - (nmUnit(a) ?? -1) || unit(b) - unit(a)   // bez ceny NM na końcu
+      : (a, b) => coll.compare(cardNoKey(a), cardNoKey(b)) || byName(a, b));
   }
   const s = pfSort();
   return gs.sort((a, b) => s === 'value' ? b.value - a.value : s === 'date' ? b.last.localeCompare(a.last) || coll.compare(a.set, b.set)
@@ -1139,7 +1145,8 @@ function vPortfel(v) {
     ${(S.market?.pv || []).length >= 2 ? legend([['Wartość', css('--s1')], ['Koszt zakupu', css('--muted'), true]]) + '<div class="chart"><canvas id="c-pf"></canvas></div>' : '<div class="banner">📈 Wykres pojawi się po dwóch dniach pomiarów bota.</div>'}</div>
   <div class="card" style="margin-top:12px"><div class="spread"><h2 style="margin:0">Pozycje</h2>
     <div class="row"><input type="search" id="pf-q" placeholder="🔎 Szukaj w portfelu (nazwa, numer, dodatek)" value="${esc(S.pfQ || '')}" style="min-width:240px">${!S.readOnly && dupGroups().length ? `<button class="btn sm" data-act="pfmerge" title="Te same karty (ta sama wersja, RH, miesiąc zakupu) jako jedna pozycja z sumą sztuk i kosztów">🔗 Scal duplikaty (${dupGroups().reduce((a, g) => a + g.length - 1, 0)})</button>` : ''}
-    <label class="row" style="font-size:13px">Dodatki <select id="pf-sort"><option value="name" ${pfSort() === 'name' ? 'selected' : ''}>alfabetycznie</option><option value="value" ${pfSort() === 'value' ? 'selected' : ''}>wg wartości</option><option value="date" ${pfSort() === 'date' ? 'selected' : ''}>od najnowszych</option></select></label></div></div>
+    <label class="row" style="font-size:13px">Dodatki <select id="pf-sort"><option value="name" ${pfSort() === 'name' ? 'selected' : ''}>alfabetycznie</option><option value="value" ${pfSort() === 'value' ? 'selected' : ''}>wg wartości</option><option value="date" ${pfSort() === 'date' ? 'selected' : ''}>od najnowszych</option><option value="flat" ${pfSort() === 'flat' ? 'selected' : ''}>bez podziału</option></select></label>
+    <label class="row" style="font-size:13px">Karty <select id="pf-csort">${[['no', 'wg numeru'], ['name', 'alfabetycznie'], ['avg', 'wg średniej ceny'], ['nm', 'wg najtańszej NM']].map(([v, t]) => `<option value="${v}" ${pfCSort() === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div></div>
     <div class="tblw" style="margin-top:8px"><table class="tbl">
     <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Najtaniej NM / szt.</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
     ${(() => { const gs = pfGroups(pfFilter(pf.active)); return gs.length ? '' : `<tr><td colspan="9" class="empty">Nic nie pasuje do „${esc(S.pfQ)}”.</td></tr>`; })()}
@@ -1157,6 +1164,7 @@ function vPortfel(v) {
     ${pf.sold.map(r => { const g = (+r.h.sold.price_pln || 0) - r.cost; return `<tr><td class="name"><div class="nm">${esc(r.m.name)}<small>${r.h.qty || 1} szt.</small></div></td><td>${P(r.cost)}</td><td>${P(+r.h.sold.price_pln)}</td><td class="${cls(g)}">${g >= 0 ? '+' : '−'}${P(Math.abs(g))}</td><td>${dPL(r.h.sold.date)}${r.free && r.h.sold.date < r.free ? '<br><small class="down">przed upływem 6 mies.</small>' : ''}</td><td><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}">✎</button></td></tr>`; }).join('')}</table></div>
     <p class="muted" style="font-size:12px;margin:8px 0 0">Zrealizowany zysk razem: <b class="${cls(pf.realized)}">${pf.realized >= 0 ? '+' : '−'}${P(Math.abs(pf.realized))}</b></p></div>` : ''}`;
   $('#pf-sort').addEventListener('change', e => { ls.set('skarbiec_pf_sort', e.target.value); render(); });
+  $('#pf-csort').addEventListener('change', e => { ls.set('skarbiec_pf_csort', e.target.value); render(); });
   $('#pf-q').addEventListener('input', e => {   // przerysowanie gubi fokus – przywracamy go z kursorem na końcu
     S.pfQ = e.target.value; clearTimeout(S._pfQt);
     S._pfQt = setTimeout(() => { render(); const i = $('#pf-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 200);
