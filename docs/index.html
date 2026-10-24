@@ -1339,6 +1339,49 @@ async function cropCard(file, box) {
   cv.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, cv.width, cv.height); bmp.close?.();
   return new Promise(ok => cv.toBlob(ok, 'image/jpeg', 0.92));
 }
+// Dolny pasek karty (kod setu, numer, rzadkość – drobny druk w ramce, np. „M2a 024/128 AR”) z PEŁNEJ rozdzielczości zdjęcia,
+// powiększony. W pierwszym odczycie całe zdjęcie idzie zmniejszone do 1568 px i ten druk ma kilkanaście pikseli – stąd błędy
+// w kodach setów (zwłaszcza japońskich). Drugi, celowany odczyt nadpisuje numer/kod, gdy jest czytelny.
+async function cropFooter(bmp, box) {
+  if (!Array.isArray(box) || box.length !== 4) return null;
+  let [l, t, r, b] = box.map(v => Math.max(0, Math.min(1000, +v || 0)) / 1000);
+  if (r - l < 0.05 || b - t < 0.05) return null;
+  const h = b - t, mx = (r - l) * 0.03;
+  const y0 = t + h * 0.80, y1 = Math.min(1, b + h * 0.02);   // dolne ~20% karty (w toploaderze/slabie ramka jest wyżej, stąd zapas)
+  const sx = Math.max(0, l - mx) * bmp.width, sw = (Math.min(1, r + mx) - Math.max(0, l - mx)) * bmp.width, sy = y0 * bmp.height, sh = (y1 - y0) * bmp.height;
+  const sc = Math.min(3, 1400 / sw);   // ok. 1400 px szerokości, powiększenie do 3×
+  const cv = document.createElement('canvas'); cv.width = Math.round(sw * sc); cv.height = Math.round(sh * sc);
+  const g = cv.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(bmp, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+  return new Promise(ok => cv.toBlob(ok, 'image/jpeg', 0.95));
+}
+const FOOT_SCHEMA = { type: 'object', additionalProperties: false, required: ['items'], properties: { items: { type: 'array', items: { type: 'object', additionalProperties: false,
+  required: ['i', 'readable', 'set_code', 'number', 'set_total', 'rarity', 'confidence'],
+  properties: { i: { type: 'integer' }, readable: { type: 'boolean' }, set_code: { type: 'string' }, number: { type: 'string' }, set_total: { type: 'string' }, rarity: { type: 'string' },
+    confidence: { type: 'string', enum: ['high', 'medium', 'low'] } } } } } };
+const FOOT_SYSTEM = `Each numbered image is the enlarged bottom strip of one Pokémon TCG card (English or Japanese). Read only the small print, usually at the bottom left inside the border:
+- set_code: the set/expansion code exactly as printed, e.g. "SV2a", "M2a", "sv8", "SV-P", "XY-P", "MEE", "DRI", "CRI", "30C" (on English cards often a short code next to the regulation letter).
+- number: collector number before the slash as printed ("024", "TG23", "201"); set_total: number after the slash ("128"), "" if none (promos).
+- rarity: rarity mark if printed ("C", "U", "R", "RR", "AR", "SAR", "SR", "UR", "ACE"…), else "".
+- readable: false if the strip does not show this print clearly. confidence: "high" only if code and number are sharp and certain. Never guess – use "" for anything unreadable.`;
+async function readFooters(j, dets) {
+  const withBox = dets.map((d, i) => ({ d, i })).filter(x => Array.isArray(x.d.box));
+  if (!withBox.length) return;
+  const bmp = await createImageBitmap(j.file);
+  const parts = [];
+  for (const { d, i } of withBox) { const blob = await cropFooter(bmp, d.box).catch(() => null); if (blob) parts.push({ i, blob }); }
+  bmp.close?.();
+  if (!parts.length) return;
+  const content = [];
+  for (const [k, p] of parts.entries()) content.push({ type: 'text', text: `${k}.` }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64e(new Uint8Array(await p.blob.arrayBuffer())) } });
+  const msg = await (await aiClient()).messages.create({ model: AI_MODEL, max_tokens: 2048, thinking: { type: 'disabled' }, system: FOOT_SYSTEM,
+    output_config: { format: { type: 'json_schema', schema: FOOT_SCHEMA } }, messages: [{ role: 'user', content }] });
+  const cost = (msg.usage.input_tokens * AI_PRICE.in + msg.usage.output_tokens * AI_PRICE.out) / 1e6; SC.cost += cost; j.cost = (j.cost || 0) + cost;
+  for (const r of JSON.parse(msg.content.find(b => b.type === 'text')?.text || '{"items":[]}').items || []) {
+    const p = parts[r.i]; if (!p || !r.readable || r.confidence === 'low' || !r.number) continue;
+    const d = dets[p.i];
+    Object.assign(d, { number: r.number, set_total: r.set_total || (r.set_code ? '' : d.set_total), set_code: r.set_code || d.set_code, footer: r.confidence, ...(r.rarity ? { rarity: r.rarity } : {}) });
+  }
+}
 async function scaleImage(file, max, type, q) {
   const bmp = await createImageBitmap(file);
   const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
@@ -1475,6 +1518,8 @@ async function scanJob(j) {
     if (msg.stop_reason === 'refusal') throw new Error('Model odmówił analizy tego zdjęcia.');
     if (msg.stop_reason === 'max_tokens') throw new Error('Za dużo kart na jednym zdjęciu – podziel je na mniejsze.');
     const out = JSON.parse(msg.content.find(b => b.type === 'text')?.text || '{"cards":[]}');
+    // drugi odczyt: kod setu i numer z dolnego paska każdej karty w pełnej rozdzielczości (błąd tu nie przerywa skanu)
+    if ((out.cards || []).length) { j.status = 'kod setu'; scQueue(); await readFooters(j, out.cards).catch(e => console.warn('pasek karty:', e.message)); }
     j.status = 'dopasowanie'; scQueue();
     try { await loadCatalog(); } catch {}
     j.cards = await Promise.all((out.cards || []).map(async det => {
@@ -1709,7 +1754,7 @@ function scQueue() {
   if (!SC.jobs.length) { q.innerHTML = '<div class="empty">Kolejka jest pusta. Dodaj zdjęcia powyżej.</div>'; return; }
   const sel = scSelected(), fx = fxNow();
   const all = SC.jobs.flatMap(j => j.cards.filter(c => c.cands[c.sel]).map(c => (scPrice(c.cands[c.sel], c.holo) || 0) * c.qty));
-  const STAT = { czeka: '<span class="muted">czeka…</span>', analiza: '<span class="spin"></span> Claude czyta zdjęcie…', dopasowanie: '<span class="spin"></span> szukam w TCGdex…' };
+  const STAT = { czeka: '<span class="muted">czeka…</span>', analiza: '<span class="spin"></span> Claude czyta zdjęcie…', 'kod setu': '<span class="spin"></span> czytam kod setu i numer z dołu karty…', dopasowanie: '<span class="spin"></span> szukam w TCGdex…' };
   q.innerHTML = `
   <div class="spread"><div><h2 style="margin:0">Do zatwierdzenia</h2><div class="muted" style="font-size:12px">${SC.jobs.length} zdjęć · rozpoznane karty warte razem ${E(all.reduce((a, b) => a + b, 0))} (≈ ${P(all.reduce((a, b) => a + b, 0) * fx)}) · koszt API w tej sesji ≈ ${SC.cost.toFixed(4).replace('.', ',')} $</div></div>
     <div class="row"><label class="row muted" style="font-size:13px">data zakupu <input type="date" id="sc-date" value="${SC.date}" max="${todayISO()}"></label>
@@ -1725,7 +1770,7 @@ function scQueue() {
         ${k?.img ? `<img src="${esc(k.img)}" alt="" loading="lazy">` : k?.idp ? `<img data-cmimg="${k.idp}" src="${c.cropUrl || j.url}" alt="" title="Twoje zdjęcie – zdjęcie z Cardmarketu pojawi się po sprawdzeniu cen przez rozszerzenie">` : '<span></span>'}
         <div style="min-width:0"><div class="nm">${esc(k ? k.name : c.det.name || '?')} <span class="muted" style="font-weight:400">${esc(printedNo(c.det) || (k ? `${k.no}/${k.total ?? '?'}` : ''))}</span>
           ${(k?.lang || c.det.language) === 'ja' ? '<span class="badge">JP</span>' : ''}${c.det.name_en && c.det.name_en !== (k?.name || c.det.name) && JA_SCRIPT.test(c.det.name) ? ` <span class="muted" style="font-weight:400">(${esc(c.det.name_en)})</span>` : ''}
-          ${c.det.slab_company ? `<span class="badge good" title="Slab – wycenę wpiszesz w portfelu">${esc(`${c.det.slab_company} ${c.det.slab_grade || ''}`.trim())}</span>` : ''}${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k?.exact ? `<span class="badge good" title="Kod i numer z karty zgadzają się z tytułem produktu na Cardmarkecie"><span class="dot"></span>✓ ${esc(k.cmCode)}</span>` : k?.verify ? '<span class="badge warn" title="Rozszerzenie Chrome sprawdzi numer na Cardmarkecie i samo poprawi wersję w portfelu"><span class="dot"></span>do weryfikacji</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
+          ${c.det.footer && c.det.set_code ? `<span class="badge" title="Odczytane z powiększonego dolnego paska karty">${esc(c.det.set_code)}</span>` : ''}${c.det.slab_company ? `<span class="badge good" title="Slab – wycenę wpiszesz w portfelu">${esc(`${c.det.slab_company} ${c.det.slab_grade || ''}`.trim())}</span>` : ''}${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k?.exact ? `<span class="badge good" title="Kod i numer z karty zgadzają się z tytułem produktu na Cardmarkecie"><span class="dot"></span>✓ ${esc(k.cmCode)}</span>` : k?.verify ? '<span class="badge warn" title="Rozszerzenie Chrome sprawdzi numer na Cardmarkecie i samo poprawi wersję w portfelu"><span class="dot"></span>do weryfikacji</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
           <small>${esc(k ? [k.set, k.rarity].filter(Boolean).join(' · ') : 'nie dopasowano – ' + [c.det.set_code, c.det.language].filter(Boolean).join(' '))} · ${esc(c.det.position)}${pr ? ` · trend <b>${E(pr)}</b>` : ''}${k?.idp ? ` · <a href="${cmLink(k.idp, k.name)}" target="_blank" rel="noopener">Cardmarket ↗</a>` : ''}</small></div></div>
         <div class="ctl">
           ${c.cands.length > 1 ? `<select data-j="${j.id}" data-c="${i}" data-f="sel" aria-label="Wariant">${c.cands.map((x, n) => `<option value="${n}" ${n === c.sel ? 'selected' : ''}>${esc(`${x.name} · ${x.set}${S.cmnums?.[x.idp] ? ' · ' + S.cmnums[x.idp].slice(0, 2).join(' ') : ''}`)}</option>`).join('')}<option value="-1" ${c.sel < 0 ? 'selected' : ''}>żadna z tych</option></select>` : ''}
