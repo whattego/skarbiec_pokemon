@@ -769,6 +769,26 @@ function autoLogHTML(opt) {
   return `<details style="margin-top:6px"${ev[0].res !== 'ok' && Date.now() - ev[0].t < 864e5 ? ' open' : ''}><summary class="muted" style="font-size:12px;cursor:pointer">Auto-koszyk – próby z ostatnich 7 dni (${ev.length})</summary>
     <ul style="font-size:12px;margin:4px 0 0;padding-left:18px">${ev.map(e => `<li>${tm(e.t)}: wyliczone ${E(e.calc)} → ${txt(e)}</li>`).join('')}</ul></details>`;
 }
+// zmiany ofert między liczeniami optymalizatora (opt.changes): co zniknęło (kupione / wycofane), nowe tańsze oferty, zmiany cen
+// i wysyłki – z linkami do kart i do sprzedawców (ich karty z tej Wants Listy)
+function changesHTML(opt) {
+  const ev = (opt?.changes || []).slice(-15).reverse(); if (!ev.length) return '';
+  const tm = t => new Date(t).toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const a = (u, t) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>`;
+  const cards = cs => cs.map(c => `${a(c.url, c.n)} (${E(c.p)})`).join(', ');
+  const one = e => {
+    const d = e.total - e.prev, parts = [];
+    if (e.gone.length) parts.push(`<div><b>Zniknęły</b> (kupione albo wycofane): ${e.gone.map(g => `${a(g.url, g.s)} – ${cards(g.c)}`).join('; ')}</div>`);
+    if (e.fresh.length) parts.push(`<div><b>Nowe tańsze oferty:</b> ${e.fresh.map(g => `${a(g.url, g.s)} – ${cards(g.c)}`).join('; ')}</div>`);
+    if (e.dearer.length) parts.push(`<div><b>Podrożały:</b> ${e.dearer.map(c => `${a(c.url, c.n)} u ${esc(c.s)} ${E(c.from)} → ${E(c.to)}`).join(', ')}</div>`);
+    if (e.cheaper.length) parts.push(`<div><b>Potaniały:</b> ${e.cheaper.map(c => `${a(c.url, c.n)} u ${esc(c.s)} ${E(c.from)} → ${E(c.to)}`).join(', ')}</div>`);
+    if (e.ship.length) parts.push(`<div><b>Inna wysyłka</b> (sprawdzona w koszyku): ${e.ship.map(esc).join(', ')}</div>`);
+    if (!parts.length) parts.push('<div class="muted">te same oferty – inaczej ułożone paczki</div>');
+    return `<li style="margin-bottom:6px"><span class="${d < 0 ? 'up' : 'down'}">${d < 0 ? '📉' : '📈'} ${E(e.prev)} → ${E(e.total)}</span> <span class="muted">${tm(e.t)} · karty ${e.dCards >= 0 ? '+' : ''}${E(e.dCards)}, wysyłka ${e.dShip >= 0 ? '+' : ''}${E(e.dShip)}</span>${parts.join('')}</li>`;
+  };
+  return `<details style="margin-top:6px"><summary class="muted" style="font-size:12px;cursor:pointer">Zmiany ofert między liczeniami (${ev.length})</summary>
+    <ul style="font-size:12px;margin:4px 0 0;padding-left:18px">${ev.map(one).join('')}</ul></details>`;
+}
 function timeChart(canvas, sets, { money = 'E', target = null, from = null } = {}) {
   if (!window.Chart || !canvas) return;
   const fmt = money === 'P' ? P : E, muted = css('--muted');
@@ -980,7 +1000,7 @@ function vWatch(v) {
       <div class="row" role="group" aria-label="Zakres wykresu">${WL_RANGES.map(([k, l]) => `<button class="btn sm${wlRange() === k ? ' primary' : ''}" data-act="wlrange" data-r="${k}" aria-pressed="${wlRange() === k}">${l}</button>`).join('')}</div></div>
       <div class="chart"><canvas id="c-wl"></canvas></div>
       ${optPts.length ? `<p class="muted" style="font-size:12px;margin:6px 0 0">Komplet liczony: ostatnio ${new Date(optLast).toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · dziś ${optToday} ${optToday === 1 ? 'liczenie' : [2, 3, 4].includes(optToday % 10) && ![12, 13, 14].includes(optToday % 100) ? 'liczenia' : 'liczeń'}${optEvery ? ` · zwykle co ${optEvery} min` : ''}${Date.now() - optLast > 45 * 60e3 ? ' · <span class="down">od ponad 45 min brak nowego liczenia – czy Chrome z rozszerzeniem jest włączony?</span>' : ''}</p>` : ''}
-      ${autoLogHTML(opt)}`
+      ${autoLogHTML(opt)}${changesHTML(opt)}`
       : `<div class="banner">📈 Wykres pojawi się po drugim pomiarze bota albo po pierwszym „Uaktualnij ceny EN/NM”.</div>`}
   </div>
   <div class="card" style="margin-top:12px"><div class="tblw"><table class="tbl">
