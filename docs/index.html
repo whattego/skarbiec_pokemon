@@ -1082,6 +1082,12 @@ const isBulk = r => { if (!(bulkMin() > 0) || r.graded || r.value == null) retur
 const pfSort = () => ls.get('skarbiec_pf_sort') || 'name';
 const pfClosed = () => { try { return new Set(JSON.parse(ls.get('skarbiec_pf_closed') || '[]')); } catch { return new Set(); } };
 const cardNoKey = r => (S.cmnums?.[r.h.id]?.[1] || String(r.h.no || '').split('/')[0] || '').toUpperCase();   // „030”, „TG23”
+// wyszukiwarka w Portfelu: nazwa (jak na Cardmarkecie, z kodem i numerem), dodatek, numer z karty, notatka; wszystkie słowa muszą pasować
+function pfFilter(rows) {
+  const q = (S.pfQ || '').toLowerCase().trim(); if (!q) return rows;
+  const words = q.split(/\s+/);
+  return rows.filter(r => { const cn = S.cmnums?.[r.h.id]; const t = [r.m.name, r.m.set, r.h.no, cn?.[0], cn?.[1], cn ? cn.slice(0, 2).join('') : '', r.h.note, r.h.lang === 'ja' ? 'jp japońska' : '', verBadge(r.h.id).replace(/<[^>]+>/g, '')].join(' ').toLowerCase(); return words.every(w => t.includes(w)); });
+}
 function pfGroups(rows) {
   const closed = pfClosed(), map = new Map();
   const BULK = `Bulk – karty poniżej ${String(bulkMin()).replace('.', ',')} €`;
@@ -1096,7 +1102,7 @@ function pfGroups(rows) {
   const coll = new Intl.Collator('pl', { numeric: true, sensitivity: 'base' });
   const gs = [...map.values()];
   for (const g of gs) {
-    g.open = g.bulk ? closed.has('+bulk') : !closed.has(g.set);   // bulk domyślnie zwinięty
+    g.open = S.pfQ ? true : g.bulk ? closed.has('+bulk') : !closed.has(g.set);   // bulk domyślnie zwinięty; przy wyszukiwaniu wszystko rozwinięte
     g.lang = g.rows.every(r => r.h.lang === 'ja') ? 'JP' : '';
     g.rows.sort((a, b) => coll.compare(cardNoKey(a), cardNoKey(b)) || coll.compare(a.m.name, b.m.name));
   }
@@ -1132,11 +1138,12 @@ function vPortfel(v) {
   <div class="card" style="margin-top:12px"><h2>Wartość w czasie</h2>
     ${(S.market?.pv || []).length >= 2 ? legend([['Wartość', css('--s1')], ['Koszt zakupu', css('--muted'), true]]) + '<div class="chart"><canvas id="c-pf"></canvas></div>' : '<div class="banner">📈 Wykres pojawi się po dwóch dniach pomiarów bota.</div>'}</div>
   <div class="card" style="margin-top:12px"><div class="spread"><h2 style="margin:0">Pozycje</h2>
-    <div class="row">${!S.readOnly && dupGroups().length ? `<button class="btn sm" data-act="pfmerge" title="Te same karty (ta sama wersja, RH, miesiąc zakupu) jako jedna pozycja z sumą sztuk i kosztów">🔗 Scal duplikaty (${dupGroups().reduce((a, g) => a + g.length - 1, 0)})</button>` : ''}
+    <div class="row"><input type="search" id="pf-q" placeholder="🔎 Szukaj w portfelu (nazwa, numer, dodatek)" value="${esc(S.pfQ || '')}" style="min-width:240px">${!S.readOnly && dupGroups().length ? `<button class="btn sm" data-act="pfmerge" title="Te same karty (ta sama wersja, RH, miesiąc zakupu) jako jedna pozycja z sumą sztuk i kosztów">🔗 Scal duplikaty (${dupGroups().reduce((a, g) => a + g.length - 1, 0)})</button>` : ''}
     <label class="row" style="font-size:13px">Dodatki <select id="pf-sort"><option value="name" ${pfSort() === 'name' ? 'selected' : ''}>alfabetycznie</option><option value="value" ${pfSort() === 'value' ? 'selected' : ''}>wg wartości</option><option value="date" ${pfSort() === 'date' ? 'selected' : ''}>od najnowszych</option></select></label></div></div>
     <div class="tblw" style="margin-top:8px"><table class="tbl">
     <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Najtaniej NM / szt.</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
-    ${pfGroups(pf.active).map(g => `<tr class="grp click" data-act="pfgrp" data-set="${esc(g.bulk ? '+bulk' : g.set)}"><td colspan="9"><span class="muted">${g.open ? '▾' : '▸'}</span> <b>${esc(g.set)}</b>${g.lang ? ' <span class="badge">JP</span>' : ''}
+    ${(() => { const gs = pfGroups(pfFilter(pf.active)); return gs.length ? '' : `<tr><td colspan="9" class="empty">Nic nie pasuje do „${esc(S.pfQ)}”.</td></tr>`; })()}
+    ${pfGroups(pfFilter(pf.active)).map(g => `<tr class="grp click" data-act="pfgrp" data-set="${esc(g.bulk ? '+bulk' : g.set)}"><td colspan="9"><span class="muted">${g.open ? '▾' : '▸'}</span> <b>${esc(g.set)}</b>${g.lang ? ' <span class="badge">JP</span>' : ''}
       <span class="muted">· ${[g.n ? `${g.n} ${plKart(g.n)}` : '', g.ns ? `${g.ns} szt. sealed` : ''].filter(Boolean).join(' + ')} · </span>${P(g.value)}${g.cost ? ` <span class="${cls(pct(g.value, g.cost))}">${PC(pct(g.value, g.cost))}</span>` : ''}${g.bulk && !S.readOnly && g.rows.some(r => r.h.photos?.length || r.h.crop) ? ` <button class="btn sm" data-act="bulkphotos" style="margin-left:8px">🧹 Usuń moje zdjęcia bulk</button>` : ''}</td></tr>` + (g.open ? g.rows.map(r => `<tr>
       <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${verBadge(r.h.id)}${r.h.no && !S.cmnums?.[r.h.id] ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}${r.h.grade?.by ? ` <span class="badge good" title="${esc(r.h.grade.cert ? 'certyfikat ' + r.h.grade.cert : 'karta oceniona')}">${esc(gradeLbl(r.h))}</span>` : ''}${{ listed: ` <span class="badge good" title="${esc(sellTip(r.h))}">CM ${E(S.listed?.[r.h.uid]?.price)}${S.listed?.[r.h.uid]?.miss ? ' ?' : ''}</span>`, wait: ' <span class="badge" title="Rozszerzenie wystawi ją przy najbliższym przebiegu">na sprzedaż – czeka</span>', err: ` <span class="badge warn" title="${esc(S.listed?.[r.h.uid]?.err || '')}"><span class="dot"></span>wystawienie nie wyszło</span>` }[sellState(r.h)] || ''}${r.h.verify ? ' <span class="badge warn" title="Wersję (dodatek) poprawi rozszerzenie po sprawdzeniu numeru na Cardmarkecie"><span class="dot"></span>do weryfikacji</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set ? '' : KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : !S.readOnly && !isBulk(r) ? `<button class="btn sm" data-act="holdphotoadd" data-uid="${r.h.uid}" title="Dodaj własne zdjęcie tej karty (np. gdy podrożała ponad próg bulk)" style="margin-top:4px">📷 +</button>` : ''}</td>
       <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.h.grade?.by ? `<br><small class="${gradeDue(r.h) ? 'down' : 'muted'}">${r.graded ? `wycena ręczna ${dPL(r.h.grade.t)}${gradeDue(r.h) ? ' · do aktualizacji' : ''}` : 'wpisz wycenę slabu'}</small>${r.graded && r.raw != null ? `<br><small class="muted" title="Cena karty bez gradingu (${PF_METRICS[pfMetric()][0]})">bez gradingu ${P(r.raw)}</small>` : ''}` : r.unsure ? '<br><small class="muted" title="Wersja karty jeszcze niepewna – liczę najniższą cenę spośród możliwych wersji">minimum · do weryfikacji</small>' : r.fb ? `<br><small class="muted" title="Cardmarket nie podaje dla tego produktu średniej (${esc(PF_METRICS[pfMetric()][0])}) – zwykle sealed; wartość liczona z trendu">wg trendu (brak średniej)</small>` : ''}</td>
@@ -1144,12 +1151,16 @@ function vPortfel(v) {
       <td class="${cls(r.plp)}">${r.pl != null ? `${r.pl >= 0 ? '+' : '−'}${P(Math.abs(r.pl))}<br><small>${PC(r.plp)}</small>` : '—'}</td>
       <td class="${cls(r.d7)}">${PC(r.d7)}</td>
       <td>${r.free ? (r.free <= today ? '<span class="badge good"><span class="dot"></span>już teraz</span>' : `<span class="badge warn"><span class="dot"></span>${dPL(r.free)}</span>`) : '—'}</td>
-      <td><div class="row" style="justify-content:flex-end;flex-wrap:nowrap">${r.h.grade?.by ? `<button class="btn sm${gradeDue(r.h) ? ' primary' : ''}" data-act="gradeval" data-uid="${r.h.uid}" title="Wpisz aktualną wartość slabu">Wyceń</button>` : ''}${r.h.grade?.by ? '' : `<button class="btn sm" data-act="sellcm" data-uid="${r.h.uid}" title="Wystaw na Cardmarket">CM</button>`}<button class="btn sm" data-act="sell" data-uid="${r.h.uid}">Sprzedaj</button><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}" title="Edytuj">✎</button></div></td></tr>`).join('') : '')).join('') || '<tr><td colspan="9" class="empty">Portfel jest pusty. Dodaj karty i sealed, które już masz – z ceną i datą zakupu.</td></tr>'}
+      <td><div class="row" style="justify-content:flex-end;flex-wrap:nowrap">${r.h.grade?.by ? `<button class="btn sm${gradeDue(r.h) ? ' primary' : ''}" data-act="gradeval" data-uid="${r.h.uid}" title="Wpisz aktualną wartość slabu">Wyceń</button>` : ''}${r.h.grade?.by ? '' : `<button class="btn sm" data-act="sellcm" data-uid="${r.h.uid}" title="Wystaw na Cardmarket">CM</button>`}<button class="btn sm" data-act="sell" data-uid="${r.h.uid}">Sprzedaj</button><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}" title="Edytuj">✎</button></div></td></tr>`).join('') : '')).join('') || (S.pfQ ? '' : '<tr><td colspan="9" class="empty">Portfel jest pusty. Dodaj karty i sealed, które już masz – z ceną i datą zakupu.</td></tr>')}
   </table></div></div>
   ${pf.sold.length ? `<div class="card" style="margin-top:12px"><h2>Sprzedane</h2><div class="tblw"><table class="tbl"><tr><th>Pozycja</th><th>Koszt</th><th>Sprzedaż</th><th>Zysk</th><th>Data</th><th></th></tr>
     ${pf.sold.map(r => { const g = (+r.h.sold.price_pln || 0) - r.cost; return `<tr><td class="name"><div class="nm">${esc(r.m.name)}<small>${r.h.qty || 1} szt.</small></div></td><td>${P(r.cost)}</td><td>${P(+r.h.sold.price_pln)}</td><td class="${cls(g)}">${g >= 0 ? '+' : '−'}${P(Math.abs(g))}</td><td>${dPL(r.h.sold.date)}${r.free && r.h.sold.date < r.free ? '<br><small class="down">przed upływem 6 mies.</small>' : ''}</td><td><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}">✎</button></td></tr>`; }).join('')}</table></div>
     <p class="muted" style="font-size:12px;margin:8px 0 0">Zrealizowany zysk razem: <b class="${cls(pf.realized)}">${pf.realized >= 0 ? '+' : '−'}${P(Math.abs(pf.realized))}</b></p></div>` : ''}`;
   $('#pf-sort').addEventListener('change', e => { ls.set('skarbiec_pf_sort', e.target.value); render(); });
+  $('#pf-q').addEventListener('input', e => {   // przerysowanie gubi fokus – przywracamy go z kursorem na końcu
+    S.pfQ = e.target.value; clearTimeout(S._pfQt);
+    S._pfQt = setTimeout(() => { render(); const i = $('#pf-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 200);
+  });
   $('#pf-metric')?.addEventListener('change', async e => {
     S.vault.settings = { ...DEFAULT_SETTINGS, ...(S.vault.settings || {}), pf_metric: e.target.value };
     render(); await saveVault('wycena portfela: ' + PF_METRICS[e.target.value][0]);
