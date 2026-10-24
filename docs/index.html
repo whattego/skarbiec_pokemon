@@ -314,6 +314,20 @@ async function applyVerify() {
   if (n && await saveVault(`weryfikacja numerów: ${n} kart`)) toast(`Zweryfikowano ${n} kart po numerze z Cardmarketu ✓`, 4000);
 }
 
+// Zlecenie dla rozszerzenia na komputerze (telefon go nie ma): en/request.json; rozszerzenie sprawdza je co 5 min
+async function requestDesktop(what) {
+  if (S.readOnly || !GH.token || !PHOTOS.repo) return false;
+  try {
+    await PHOTOS.enqueue(async () => {
+      let sha; try { sha = (await GH.call('/contents/en/request.json', {}, PHOTOS.repo)).sha; } catch (e) { if (!/ 404/.test(e.message)) throw e; }
+      if (!PHOTOS.branch) PHOTOS.branch = (await GH.call('', {}, PHOTOS.repo)).default_branch || 'main';
+      const json = JSON.stringify({ v: 1, t: new Date().toISOString(), what });
+      await GH.call('/contents/en/request.json', { method: 'PUT', body: JSON.stringify({ message: `zlecenie z telefonu: ${what}`, content: b64e(new TextEncoder().encode(json)), branch: PHOTOS.branch, ...(sha ? { sha } : {}) }) }, PHOTOS.repo);
+    });
+    return true;
+  } catch (e) { console.warn('zlecenie:', e.message); return false; }
+}
+
 async function syncTargets() {
   if (S.readOnly || !GH.token || !PHOTOS.repo) return;
   const seen = new Map();
@@ -372,7 +386,7 @@ async function itemImgSrc(key) {
   if (direct) return direct;
   // zdjęcie z Cardmarketu (img/<idProduct>.jpg kopiuje rozszerzenie) – także, gdy cen EN/NM dla tej karty jeszcze nie ma
   const cmPath = S.en?.get(key)?.img || S.en?.get(key.replace(/h$/, ''))?.img || `img/${parseInt(key, 10)}.jpg`;
-  const own = all.find(x => x.photos?.length)?.photos[0];
+  const own = all.find(x => x.crop)?.crop || all.find(x => x.photos?.length)?.photos[0];
   return PHOTOS.url(cmPath).catch(() => own ? PHOTOS.url(own) : null);
 }
 let pimgEl = null, pimgKey = null;
@@ -394,7 +408,7 @@ document.addEventListener('scroll', () => { if (pimgEl) { pimgEl.remove(); pimgE
 
 function enStatusHTML() {
   const s = S.enStatus; if (!s) return '<span id="en-status"></span>';
-  const col = { run: 'muted', ok: 'up', warn: '', err: 'down' }[s.state] ?? 'muted';
+  const col = { run: 'muted', queued: 'muted', ok: 'up', warn: '', err: 'down' }[s.state] ?? 'muted';
   return `<span id="en-status" class="${col}" style="font-size:12px">${s.state === 'run' ? '<span class="spin"></span> ' : ''}${esc(s.text)}</span>`;
 }
 const agoPL = iso => { const h = (Date.now() - new Date(iso)) / 36e5; return h < 1 ? 'przed chwilą' : h < 24 ? `${Math.round(h)} godz. temu` : `${Math.round(h / 24)} dni temu`; };
@@ -719,7 +733,7 @@ function vPortfel(v) {
   <div class="spread"><div><h1>Portfel</h1><p class="sub">Co masz, ile za to dałeś i ile to jest warte dziś. Wartość według trendu Cardmarketu.</p></div>
     <button class="btn primary" data-act="addto" data-mode="portfel">+ Dodaj do portfela</button></div>
   ${pendingVerify().length ? `<div class="banner" style="margin-bottom:12px">🔎 ${pendingVerify().length} kart czeka na weryfikację wersji (JP/promo). Rozszerzenie Chrome sprawdzi ich numery na Cardmarkecie i Skarbiec sam poprawi pozycje.
-    ${enScript() ? '<button class="btn sm" data-act="enRefresh">Sprawdź teraz</button>' : 'Zrobi to przy najbliższym sprawdzaniu cen na komputerze.'}</div>` : ''}
+    <button class="btn sm" data-act="enRefresh">${enScript() ? 'Sprawdź teraz' : 'Zleć komputerowi'}</button></div>` : ''}
   <div class="grid g4">
     <div class="card stat"><div class="lbl">Wartość</div><div class="val">${P(pf.value)}</div><div class="note">≈ ${E(pf.value / fxNow())}</div></div>
     <div class="card stat"><div class="lbl">Koszt zakupu</div><div class="val">${P(pf.cost)}</div><div class="note">${pf.active.length} pozycji</div></div>
@@ -803,14 +817,15 @@ For each card read the text printed on the card itself:
 - attacks_en: the official English names of the card's attacks and abilities, in printed order (e.g. ["Hypnoblast", "Deep Wind"]); [] for Trainer/Energy cards.
 - variant: "reverse_holo" when the whole card frame except the artwork is foil, "holo" when only the artwork is foil, "normal" when there is no foil, "unknown" if you cannot tell.
 - position: where the card is in the photo in Polish (e.g. "lewy górny", "środek", "całe zdjęcie").
+- box: the card's bounding box in the photo as [left, top, right, bottom], each 0–1000 relative to the image width/height (whole photo = [0, 0, 1000, 1000]).
 - confidence: "high" only when you can clearly read both name and number.
 Skip card backs, sleeves without visible text, and non-card objects. If nothing is readable, return an empty list.`;
 const SCAN_SCHEMA = { type: 'object', additionalProperties: false, required: ['cards'], properties: { cards: { type: 'array', items: { type: 'object', additionalProperties: false,
-  required: ['name', 'number', 'set_total', 'set_code', 'language', 'name_en', 'attacks_en', 'variant', 'position', 'confidence'],
+  required: ['name', 'number', 'set_total', 'set_code', 'language', 'name_en', 'attacks_en', 'variant', 'position', 'box', 'confidence'],
   properties: { name: { type: 'string' }, number: { type: 'string' }, set_total: { type: 'string' }, set_code: { type: 'string' },
     name_en: { type: 'string' }, attacks_en: { type: 'array', items: { type: 'string' } },
     language: { type: 'string', enum: ['en', 'ja', 'other'] }, variant: { type: 'string', enum: ['normal', 'holo', 'reverse_holo', 'unknown'] },
-    position: { type: 'string' }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] } } } } } };
+    position: { type: 'string' }, box: { type: 'array', items: { type: 'integer' } }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] } } } } } };
 const SC = { jobs: [], cost: 0, date: todayISO(), busy: 0 };
 let _ai = null;
 async function aiClient() {
@@ -829,6 +844,18 @@ function aiError(e) {
   if (s === 429) return 'Za dużo zapytań naraz – spróbuj za minutę.';
   if (s >= 500) return 'Serwery Anthropic są przeciążone – spróbuj ponownie.';
   return m;
+}
+// wycinek jednej karty ze zdjęcia (box 0–1000 z modelu, z małym marginesem) – podgląd, gdy TCGdex nie ma obrazka karty
+async function cropCard(file, box) {
+  if (!Array.isArray(box) || box.length !== 4) return null;
+  let [l, t, r, b] = box.map(v => Math.max(0, Math.min(1000, +v || 0)) / 1000);
+  if (r - l < 0.05 || b - t < 0.05) return null;
+  const m = 0.02; l = Math.max(0, l - m); t = Math.max(0, t - m); r = Math.min(1, r + m); b = Math.min(1, b + m);
+  const bmp = await createImageBitmap(file);
+  const sx = l * bmp.width, sy = t * bmp.height, sw = (r - l) * bmp.width, sh = (b - t) * bmp.height, s = Math.min(1, 600 / Math.max(sw, sh));
+  const cv = document.createElement('canvas'); cv.width = Math.round(sw * s); cv.height = Math.round(sh * s);
+  cv.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, cv.width, cv.height); bmp.close?.();
+  return new Promise(ok => cv.toBlob(ok, 'image/jpeg', 0.85));
 }
 async function scaleImage(file, max, type, q) {
   const bmp = await createImageBitmap(file);
@@ -961,9 +988,9 @@ async function scanJob(j) {
     j.status = 'dopasowanie'; scQueue();
     try { await loadCatalog(); } catch {}
     j.cards = await Promise.all((out.cards || []).map(async det => {
-      const cands = await resolveCard(det);
+      const [cands, crop] = await Promise.all([resolveCard(det), cropCard(j.file, det.box).catch(() => null)]);
       // Reverse Holo tylko, gdy Cardmarket ma dla tej karty osobną cenę RH (np. karty LEGEND/ex są holo, ale nie „reverse”)
-      return { det, cands, sel: cands.length ? 0 : -1, holo: det.variant === 'reverse_holo' && !!catRow(cands[0]?.idp)?.[9], qty: 1, cost: '', on: !!cands[0]?.idp && det.confidence === 'high' && (cands.length === 1 || !!cands[0].exact || !!cands[0].verify) };
+      return { det, cands, crop, cropUrl: crop && URL.createObjectURL(crop), sel: cands.length ? 0 : -1, holo: det.variant === 'reverse_holo' && !!catRow(cands[0]?.idp)?.[9], qty: 1, cost: '', on: !!cands[0]?.idp && det.confidence === 'high' && (cands.length === 1 || !!cands[0].exact || !!cands[0].verify) };
     }));
     j.status = 'gotowe';
     // tryb ciągły: zdjęcie bez karty (np. pusta taca po zmianie światła) → to jest tło; kolejnego takiego zdjęcia nie wyślemy
@@ -1160,7 +1187,7 @@ function scQueue() {
         <div class="row">${j.status === 'błąd' ? `<button class="btn sm" data-act="scRetry" data-j="${j.id}">Ponów</button>` : ''}${j.status === 'gotowe' && !j.photo && !S.readOnly ? `<button class="btn sm" data-act="scPhoto" data-j="${j.id}">Zapisz zdjęcie</button>` : ''}<button class="btn sm" data-act="scDrop" data-j="${j.id}" title="Usuń z kolejki">×</button></div></div>
       ${j.cards.map((c, i) => { const k = c.cands[c.sel], pr = scPrice(k, c.holo); return `<div class="sc-card">
         <input type="checkbox" data-j="${j.id}" data-c="${i}" data-f="on" ${c.on ? 'checked' : ''} ${k ? '' : 'disabled'} aria-label="Dodaj">
-        ${k?.img ? `<img src="${esc(k.img)}" alt="" loading="lazy">` : k?.idp ? `<img data-cmimg="${k.idp}" src="${j.url}" alt="" title="Twoje zdjęcie – zdjęcie z Cardmarketu pojawi się po sprawdzeniu cen przez rozszerzenie">` : '<span></span>'}
+        ${k?.img ? `<img src="${esc(k.img)}" alt="" loading="lazy">` : k?.idp ? `<img data-cmimg="${k.idp}" src="${c.cropUrl || j.url}" alt="" title="Twoje zdjęcie – zdjęcie z Cardmarketu pojawi się po sprawdzeniu cen przez rozszerzenie">` : '<span></span>'}
         <div style="min-width:0"><div class="nm">${esc(k ? k.name : c.det.name || '?')} <span class="muted" style="font-weight:400">${esc(printedNo(c.det) || (k ? `${k.no}/${k.total ?? '?'}` : ''))}</span>
           ${(k?.lang || c.det.language) === 'ja' ? '<span class="badge">JP</span>' : ''}${c.det.name_en && c.det.name_en !== (k?.name || c.det.name) && JA_SCRIPT.test(c.det.name) ? ` <span class="muted" style="font-weight:400">(${esc(c.det.name_en)})</span>` : ''}
           ${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k?.exact ? `<span class="badge good" title="Kod i numer z karty zgadzają się z tytułem produktu na Cardmarkecie"><span class="dot"></span>✓ ${esc(k.cmCode)}</span>` : k?.verify ? '<span class="badge warn" title="Rozszerzenie Chrome sprawdzi numer na Cardmarkecie i samo poprawi wersję w portfelu"><span class="dot"></span>do weryfikacji</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
@@ -1185,11 +1212,16 @@ async function scGallery() {
 async function scApprove() {
   const sel = scSelected(); if (!sel.length) return;
   for (const j of new Set(sel.map(x => x.j))) if (!j.photo) await savePhoto(j);
+  // karty bez obrazka z TCGdex: zapisz wycinek z twojego zdjęcia (podgląd w portfelu, dopóki nie ma zdjęcia z Cardmarketu)
+  for (const { c, card } of sel) if (!card.img && c.crop && !c.cropPath && !S.readOnly) {
+    const path = `crop/${todayISO().slice(0, 7)}/${uid()}.jpg`;
+    try { await PHOTOS.put(path, c.crop, `wycinek: ${card.name}`); c.cropPath = path; PHOTOS.urls.set(path, Promise.resolve(c.cropUrl)); } catch (e) { console.warn('wycinek:', e.message); }
+  }
   const recs = sel.map(({ j, c, card }) => {
     const r = catRow(card.idp);
     return { uid: uid(), id: card.idp, holo: !!c.holo, name: r ? r[1] : card.name, set: (r && S.catalog.exp[r[3]]) || card.set, kind: 'S',
       qty: c.qty, date: SC.date, cost_pln: +(+c.cost || 0).toFixed(2), note: '', no: printedNo(c.det) || [card.no, card.total].filter(Boolean).join('/'), lang: card.lang || c.det.language, sold: null, tcgdex: card.tid,
-      ...(card.verify ? { verify: { name_en: c.det.name_en, number: c.det.number, set_code: c.det.set_code, cands: card.alts } } : {}), ...(card.img ? { img: card.img } : {}), ...(j.photo ? { photos: [j.photo] } : {}) };
+      ...(card.verify ? { verify: { name_en: c.det.name_en, number: c.det.number, set_code: c.det.set_code, cands: card.alts } } : {}), ...(card.img ? { img: card.img } : {}), ...(c.cropPath ? { crop: c.cropPath } : {}), ...(j.photo ? { photos: [j.photo] } : {}) };
   });
   const scans = new Map();
   for (const { j } of sel) if (j.photo) scans.set(j.photo, { path: j.photo, date: todayISO(), n: j.cards.length });
@@ -1199,6 +1231,8 @@ async function scApprove() {
     sel.forEach(({ c }) => { c.on = false; c.added = true; });
     SC.jobs = SC.jobs.filter(j => j.cards.some(c => !c.added && c.cands.length) || j.status !== 'gotowe');
     toast(`Dodano ${recs.length} kart do portfela ✓`);
+    // karty JP/promo do weryfikacji albo bez zdjęcia z Cardmarketu: na telefonie zleć komputerowi, na komputerze uruchom od razu
+    if (recs.some(r => r.verify || !r.img)) { if (enScript()) ACT.enRefresh(); else requestDesktop('en'); }
   }
   render();
 }
@@ -1520,6 +1554,14 @@ const ACT = {
     out.innerHTML = res.join(' · ');
   },
   enRefresh: async () => {
+    if (!enScript() && GH.token && !S.readOnly) {   // telefon / przeglądarka bez rozszerzenia: zleć komputerowi
+      S.enStatus = { state: 'queued', text: 'zlecam komputerowi…', t: Date.now() }; render();
+      await syncTargets(); await syncVerify();
+      const ok = await requestDesktop('en');
+      S.enStatus = ok ? { state: 'queued', text: `zlecone o ${new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })} – komputer z rozszerzeniem zrobi to w ciągu ok. 5 min (musi być włączony). Odśwież stronę później.`, t: Date.now() }
+        : { state: 'err', text: 'nie udało się zapisać zlecenia', t: Date.now() };
+      render(); return;
+    }
     if (!enScript()) {
       modal('Ceny EN/NM – potrzebne rozszerzenie', `<p style="margin-top:0">Ceny ofert EN/NM pobiera z Cardmarketu rozszerzenie Chrome „Skarbiec – Cardmarket” w twojej przeglądarce (twoja sesja Cardmarketu, nic nie trafia na żaden serwer).</p>
         <ol><li>Chrome → <code>chrome://extensions</code> → włącz <b>Tryb dewelopera</b> → <b>Załaduj rozpakowane</b> → wybierz folder <code>pokemon-system/extension</code>.</li><li>Odśwież tę stronę i kliknij „Uaktualnij ceny EN/NM” jeszcze raz.</li></ol>
