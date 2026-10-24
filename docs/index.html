@@ -328,7 +328,7 @@ function enLiveRefresh() {
   setInterval(enLiveTick, 180e3);
   document.addEventListener('visibilitychange', enLiveTick);
   // rozszerzenie daje znać od razu po zapisie (zdarzenie z en.js) – chwila na GitHub, potem przeładowanie bez czekania na 3 min
-  document.addEventListener('skarbiec-data', () => setTimeout(() => { _enLiveT = 0; enLiveTick(); }, 3000));
+  let deb; document.addEventListener('skarbiec-data', () => { clearTimeout(deb); deb = setTimeout(() => { _enLiveT = 0; enLiveTick(); }, 3000); });   // kilka zapisów naraz = jedno przeładowanie
 }
 const enOf = it => S.en?.get(keyOf(it)) || null;
 // lista kart dla skryptu Tampermonkey „Skarbiec – ceny EN/NM” (watchlisty + nie sprzedany portfel); jawna, ale w prywatnym repo
