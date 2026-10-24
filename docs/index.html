@@ -506,7 +506,10 @@ async function syncTargets() {
   // portfel: ceny EN/NM z Cardmarketu tylko dla kart ≥ progu bulk (0,5 €) – bulk wyceniamy z nocnego cennika (decyzja użytkownika 24.10.2026;
   // wcześniej rozszerzenie sprawdzało cały portfel, po skanowaniu setek commonów 150 stron na przebieg)
   const pfTrend = h => { const r = catRow(h.id); return r ? (h.holo ? r[9] || r[4] : r[4]) : null; };
-  const pfCheck = h => !h.sold && (h.grade?.by || !(bulkMin() > 0) || pfTrend(h) == null || pfTrend(h) >= bulkMin());
+  // ta sama granica co grupy w Portfelu (isBulk: wartość wg wybranej średniej, z histerezą) – wcześniej liczył się trend, więc
+  // karty widoczne poza bulkiem (średnia ≥ 0,5 €, trend niższy) nie trafiały do sprawdzania i zostawały „jeszcze nie sprawdzone”
+  const main = new Set(S.catalog ? holdingsCalc().active.filter(r => !isBulk(r)).map(r => r.h.uid) : []);
+  const pfCheck = h => !h.sold && (h.grade?.by || !(bulkMin() > 0) || main.has(h.uid) || pfTrend(h) == null || (!S.catalog && pfTrend(h) >= bulkMin()));
   // src: 'w' = watchlista / Rynek, 'p' = portfel – przycisk w Portfelu sprawdza tylko 'p', na watchliście tylko 'w', automat wszystko
   const add = (it, src) => { if (!(+it.id > 0)) return; const k = keyOf(it), e = seen.get(k); if (e) { if (!e.src.includes(src)) e.src += src; return; } seen.set(k, { id: +it.id, holo: !!it.holo, name: itemMeta(it).name, src, ...(isJaCard(it) ? { lang: 'ja' } : {}) }); };
   for (const it of [...(S.vault.watchlists || []).flatMap(w => w.items || []), ...marketWatch()]) add(it, 'w');
