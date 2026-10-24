@@ -388,6 +388,16 @@ async function reverifyOnce() {
     else requestDesktop('en:p');
   }
 }
+// karta do weryfikacji, której wszystkie wersje rozszerzenie już sprawdziło (są w cmnums), a żadna nie ma numeru z karty
+// (albo pasuje kilka) – kolejne sprawdzanie nic nie da, trzeba wybrać ręcznie
+const verifyStuck = h => (h.verify.cands || []).length > 0 && (h.verify.cands || []).every(id => S.cmnums?.[id]) && byNumber(h.verify, h.verify.cands.map(id => ({ idp: id }))).length !== 1;
+function verifyBanner() {
+  const all = pendingVerify(); if (!all.length) return '';
+  const stuck = all.filter(verifyStuck), wait = all.length - stuck.length;
+  return `<div class="banner" style="margin-bottom:12px">${wait ? `🔎 ${wait} ${wait === 1 ? 'karta czeka' : 'kart czeka'} na weryfikację wersji (JP/promo). Rozszerzenie Chrome sprawdzi ich numery na Cardmarkecie i Skarbiec sam poprawi pozycje.
+    <button class="btn sm" data-act="enRefresh" data-scope="v" title="Tylko numery wersji – bez sprawdzania cen portfela">${enScript() ? 'Sprawdź teraz' : 'Zleć komputerowi'}</button>` : ''}
+    ${stuck.length ? `${wait ? '<br>' : ''}⚠️ ${stuck.length === 1 ? 'Dla 1 karty' : `Dla ${stuck.length} kart`} sprawdziłem już wszystkie wersje na Cardmarkecie i żadna nie ma numeru z karty – wybierz wersję ręcznie (✎ → „Wersja karty” albo wyszukaj w „+ Dodaj do portfela” po nazwie z Cardmarketu): ${stuck.map(h => `<b>${esc(baseName(h.name))}</b> ${esc([h.verify.set_code, h.verify.number].filter(Boolean).join(' '))}`).join(', ')}.` : ''}</div>`;
+}
 async function applyVerify() {
   if (!S.cmnums || S.readOnly) return;
   let n = 0;
@@ -1091,8 +1101,7 @@ function vPortfel(v) {
   v.innerHTML = `
   <div class="spread"><div><h1>Portfel</h1><p class="sub">Co masz, ile za to dałeś i ile to jest warte dziś. Wartość według: <select id="pf-metric" ${S.readOnly ? 'disabled' : ''}>${Object.entries(PF_METRICS).map(([k, [l]]) => `<option value="${k}" ${pfMetric() === k ? 'selected' : ''}>${l}</option>`).join('')}</select> z Cardmarketu (wszystkie języki, cennik raz na dobę).</p></div>
     <button class="btn primary" data-act="addto" data-mode="portfel">+ Dodaj do portfela</button></div>
-  ${pendingVerify().length ? `<div class="banner" style="margin-bottom:12px">🔎 ${pendingVerify().length} kart czeka na weryfikację wersji (JP/promo). Rozszerzenie Chrome sprawdzi ich numery na Cardmarkecie i Skarbiec sam poprawi pozycje.
-    <button class="btn sm" data-act="enRefresh" data-scope="p">${enScript() ? 'Sprawdź teraz' : 'Zleć komputerowi'}</button></div>` : ''}
+  ${verifyBanner()}
   ${pf.active.filter(r => gradeDue(r.h)).map(r => `<div class="banner" style="margin-bottom:12px">🏷️ <b>${esc(r.m.name)} ${esc(gradeLbl(r.h))}</b>: ${r.graded ? `wycena z ${dPL(r.h.grade.t)} ma ponad ${GRADE_REMIND_D} dni` : 'slab nie ma jeszcze wyceny – liczę go po cenie karty bez gradingu'}.
     <button class="btn sm primary" data-act="gradeval" data-uid="${r.h.uid}">Wyceń teraz</button> <a href="${esc(gradeSoldUrl(r.h))}" target="_blank" rel="noopener">sprzedane na eBay ↗</a></div>`).join('')}
   <div class="grid g4">
@@ -2130,8 +2139,8 @@ async function askExpNums(ids) {
   S.vault.cm_exps = [...(S.vault.cm_exps || []).filter(e => !ids.includes(e.id) && Date.now() - e.t < 14 * 864e5), ...ids.map(id => ({ id, t: Date.now() }))].slice(-20);
   if (!await saveVault('numery kart dodatku z Cardmarketu')) return;
   await syncVerify();
-  if (document.documentElement.dataset.skarbiecEnExt) { document.documentElement.dataset.skarbiecEnScope = 'p'; document.dispatchEvent(new Event('skarbiec-en-run')); toast('Rozszerzenie pobiera numery – wyszukaj ponownie za kilka minut.', 5000); }
-  else requestDesktop('en:p').then(ok => ok && toast('Zlecone komputerowi – numery będą za ok. 5–10 min (Chrome z rozszerzeniem musi być włączony).', 6000));
+  if (document.documentElement.dataset.skarbiecEnExt) { document.documentElement.dataset.skarbiecEnScope = 'v'; document.dispatchEvent(new Event('skarbiec-en-run')); toast('Rozszerzenie pobiera numery – wyszukaj ponownie za kilka minut.', 5000); }
+  else requestDesktop('en:v').then(ok => ok && toast('Zlecone komputerowi – numery będą za ok. 5–10 min (Chrome z rozszerzeniem musi być włączony).', 6000));
 }
 function mountPicker(d, onPick) {
   let kind = 'all';
@@ -2406,7 +2415,7 @@ const ACT = {
   },
   // zakres: 'w' (watchlista: jej karty + komplet), 'p' (portfel: karty ≥ 0,5 € + weryfikacja wersji), brak = wszystko
   enRefresh: async a => {
-    const scope = a?.dataset?.scope || '', komplet = scope !== 'p' && (S.vault.watchlists || []).some(w => w.metric === 'komplet');
+    const scope = a?.dataset?.scope || '', komplet = (!scope || scope === 'w') && (S.vault.watchlists || []).some(w => w.metric === 'komplet');
     if (!enScript() && GH.token && !S.readOnly) {   // telefon / przeglądarka bez rozszerzenia: zleć komputerowi
       S.enStatus = { state: 'queued', text: 'zlecam komputerowi…', t: Date.now() }; render();
       await syncTargets(); await syncVerify();
