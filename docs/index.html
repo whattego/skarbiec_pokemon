@@ -1286,10 +1286,10 @@ async function cropCard(file, box) {
   if (r - l < 0.05 || b - t < 0.05) return null;
   const m = 0.02; l = Math.max(0, l - m); t = Math.max(0, t - m); r = Math.min(1, r + m); b = Math.min(1, b + m);
   const bmp = await createImageBitmap(file);
-  const sx = l * bmp.width, sy = t * bmp.height, sw = (r - l) * bmp.width, sh = (b - t) * bmp.height, s = Math.min(1, 600 / Math.max(sw, sh));
+  const sx = l * bmp.width, sy = t * bmp.height, sw = (r - l) * bmp.width, sh = (b - t) * bmp.height, s = Math.min(1, 1200 / Math.max(sw, sh));   // 1200 px: podgląd w portfelu i zdjęcie oferty na Cardmarket
   const cv = document.createElement('canvas'); cv.width = Math.round(sw * s); cv.height = Math.round(sh * s);
   cv.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, cv.width, cv.height); bmp.close?.();
-  return new Promise(ok => cv.toBlob(ok, 'image/jpeg', 0.85));
+  return new Promise(ok => cv.toBlob(ok, 'image/jpeg', 0.92));
 }
 async function scaleImage(file, max, type, q) {
   const bmp = await createImageBitmap(file);
@@ -1455,8 +1455,8 @@ async function savePhoto(j) {   // każde zrobione zdjęcie trafia do prywatnego
 }
 async function savePhotoNow(j) {
   try {
-    let blob = await scaleImage(j.file, 2000, 'image/webp', 0.82);
-    if (blob.type !== 'image/webp') blob = await scaleImage(j.file, 2000, 'image/jpeg', 0.85);   // Safari bez WebP
+    let blob = await scaleImage(j.file, 3024, 'image/webp', 0.9);
+    if (blob.type !== 'image/webp') blob = await scaleImage(j.file, 3024, 'image/jpeg', 0.9);   // Safari bez WebP; 3024 px – pełna klatka z iPhone'a w trybie ciągłym
     const d = todayISO(), path = `foto/${d.slice(0, 4)}/${d.slice(5, 7)}/${d}-${uid()}.${blob.type === 'image/webp' ? 'webp' : 'jpg'}`;
     await PHOTOS.put(path, blob, `foto: ${j.cards.length} kart`);
     j.photo = path; j.photoErr = null;
@@ -1504,7 +1504,7 @@ async function liveShot(manual) {
   const v = LIVE.video; if (!v?.videoWidth) return;
   const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
   c.getContext('2d').drawImage(v, 0, 0);
-  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.95));
   if (!blob) return;
   LIVE.n++;
   const f = new File([blob], `stojak-${Date.now()}.jpg`, { type: 'image/jpeg' });
@@ -1531,10 +1531,31 @@ function liveTick() {
   if (fromBase < LIVE.sens) { LIVE.last = s; LIVE.armed = false; if (LIVE.state !== 'wait') liveSet('wait', 'Pusto – połóż kartę'); return; }   // karta zdjęta
   if (fromLast >= LIVE.sens || LIVE.armed) { LIVE.last = s; LIVE.armed = false; liveShot(); }
 }
+// Kamera trybu ciągłego: najwyższa rozdzielczość, jaką da przeglądarka (do 4032×3024 – matryca 4:3), wybrany obiektyw
+// (iPhone: główna kamera nie łapie ostrości bliżej ~20 cm; „Back Triple/Dual Wide Camera” sama przełącza na szeroki/makro),
+// ciągły autofokus, jeśli dostępny. Wybór obiektywu pamiętany w localStorage skarbiec_live_cam.
+const LIVE_CAM_PREF = [/triple/i, /dual wide/i, /dual/i, /ultra ?wide/i, /back|rear|tył|environment/i];
+async function liveCams() {
+  const all = (await navigator.mediaDevices.enumerateDevices().catch(() => [])).filter(d => d.kind === 'videoinput');
+  const back = all.filter(d => !/front|przed|user|facetime/i.test(d.label));
+  return back.length ? back : all;
+}
+async function liveOpen(deviceId) {
+  const video = { width: { ideal: 4032 }, height: { ideal: 3024 }, ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: 'environment' } }) };
+  const st = await navigator.mediaDevices.getUserMedia({ audio: false, video });
+  const tr = st.getVideoTracks()[0], cap = tr.getCapabilities?.() || {};
+  if (cap.focusMode?.includes('continuous')) await tr.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+  return st;
+}
 async function liveStart() {
   if (!navigator.mediaDevices?.getUserMedia) return toast('Ta przeglądarka nie daje dostępu do kamery.', 5000);
   try {
-    LIVE.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    LIVE.stream = await liveOpen(null);
+    // po zgodzie na kamerę znamy nazwy obiektywów – wybierz zapamiętany albo najlepszy do zdjęć z bliska
+    LIVE.cams = await liveCams();
+    const want = ls.get('skarbiec_live_cam'), cur = LIVE.stream.getVideoTracks()[0].getSettings().deviceId;
+    const pick = LIVE.cams.find(d => d.deviceId === want) || LIVE_CAM_PREF.map(re => LIVE.cams.find(d => re.test(d.label))).find(Boolean);
+    if (pick && pick.deviceId !== cur) { LIVE.stream.getTracks().forEach(t => t.stop()); LIVE.stream = await liveOpen(pick.deviceId); }
   } catch (e) { LIVE.stream = null; return toast('Brak dostępu do kamery: ' + e.message, 6000); }
   LIVE.video ||= Object.assign(document.createElement('video'), { muted: true, playsInline: true, autoplay: true });
   LIVE.video.setAttribute('playsinline', '');
@@ -1544,6 +1565,11 @@ async function liveStart() {
   try { LIVE.wake = await navigator.wakeLock?.request('screen'); } catch {}   // ekran telefonu nie zgaśnie
   LIVE.timer = setInterval(liveTick, 200);
   render();
+}
+function liveRes() {   // jaka rozdzielczość faktycznie przyszła z kamery
+  const el = $('#lv-res'), v = LIVE.video; if (!el || !v?.videoWidth) return;
+  const w = Math.max(v.videoWidth, v.videoHeight), h = Math.min(v.videoWidth, v.videoHeight);
+  el.innerHTML = `obraz ${w}×${h}${w < 2500 ? ' · <span title="Safari daje stronom obraz wideo, nie zdjęcie z aparatu. Dla najlepszej jakości użyj „Zrób zdjęcie”.">niższa jakość niż aparat</span>' : ''}`;
 }
 function liveStop() {
   clearInterval(LIVE.timer); LIVE.timer = null;
@@ -1562,11 +1588,20 @@ function liveMount() {
       <label class="row muted">czułość <input type="range" id="lv-sens" min="4" max="20" value="${LIVE.sens}" style="width:110px" title="niżej = łapie słabszy kontrast, wyżej = mniej fałszywych zdjęć"></label>
       <span class="muted">zeskanowane: <b id="lv-n">${LIVE.n}</b></span>
     </div>
+    <div class="row" style="font-size:13px">${(LIVE.cams || []).length > 1 ? `<label class="row muted">obiektyw <select id="lv-cam">${LIVE.cams.map(d => `<option value="${esc(d.deviceId)}" ${d.deviceId === LIVE.stream?.getVideoTracks()[0]?.getSettings().deviceId ? 'selected' : ''}>${esc(d.label || 'kamera')}</option>`).join('')}</select></label>` : ''}
+      <span class="muted" id="lv-res"></span></div>
     <p class="muted" style="font-size:12px;margin:0">Połóż telefon na stojaku aparatem w dół, włącz tryb przy pustej tacy. Kładź karty jedna po drugiej – każda nowa, nieruchoma karta to jedno zdjęcie (ok. 0,04 ¢). Zdejmowanie karty niczego nie skanuje. Ekran nie zgaśnie, dopóki tryb działa.</p>
   </div>`;
   LIVE.video.style.cssText = 'width:100%;display:block';
   $('#lv-frame', box).appendChild(LIVE.video);
   $('#lv-sens', box).addEventListener('input', e => { LIVE.sens = +e.target.value; ls.set('skarbiec_live_sens', LIVE.sens); });
+  $('#lv-cam', box)?.addEventListener('change', async e => {   // zmiana obiektywu w locie
+    ls.set('skarbiec_live_cam', e.target.value);
+    LIVE.stream?.getTracks().forEach(t => t.stop());
+    try { LIVE.stream = await liveOpen(e.target.value); LIVE.video.srcObject = LIVE.stream; await LIVE.video.play().catch(() => {}); LIVE.base = null; LIVE.still = Date.now(); liveSet('wait', 'Patrzę na tło – nie ruszaj tacy'); liveRes(); }
+    catch (err) { toast('Nie udało się przełączyć kamery: ' + err.message, 5000); }
+  });
+  LIVE.video.addEventListener('loadedmetadata', liveRes); liveRes();
   liveSet(LIVE.state || 'wait', LIVE.text || 'Patrzę na tło – nie ruszaj tacy');
 }
 
