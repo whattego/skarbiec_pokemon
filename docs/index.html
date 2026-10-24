@@ -1325,6 +1325,15 @@ function dealsKick() {
   if (document.documentElement.dataset.skarbiecEnExt) { document.dispatchEvent(new Event('skarbiec-deals-run')); toast('Rozszerzenie sprawdza OLX i Allegro – nowe oferty pojawią się tu same.', 4000); }
   else requestDesktop('deals').then(ok => ok && toast('Zlecone komputerowi – za kilka minut (Chrome z rozszerzeniem musi być włączony).', 4500));
 }
+// stan z serwisu (OLX / Allegro Lokalnie) i z opisu wg Haiku, licytacja – używane sealed, zniszczone karty i licytacje nie są porównywane
+function dealCondBadge(it) {
+  const c = it.det?.condition, sealed = it.det?.kind === 'sealed', out = [];
+  if (it.auction) out.push('<span class="badge warn" title="Licytacja – cena to bieżąca oferta, nie cena sprzedaży; bez porównania">licytacja</span>');
+  if (sealed && (it.cond === 'used' || ['opened', 'good', 'damaged'].includes(c))) out.push('<span class="badge warn" title="Sealed używany / otwarty – bez porównania">używany</span>');
+  else if (!sealed && c === 'damaged') out.push('<span class="badge warn" title="Karta zniszczona / mocno grana – bez porównania">zniszczona</span>');
+  else if (!sealed && c === 'good') out.push('<span class="badge" title="Używana w dobrym / bardzo dobrym stanie – porównanie z NM orientacyjne">stan dobry</span>');
+  return out.length ? ' ' + out.join(' ') : '';
+}
 function vOkazje(v) {
   const cfg = dealsCfgNow(), d = S.deals, fx = d?.fx || fxNow();
   let items = (d?.items || []).filter(it => OK.src === 'all' || it.src === OK.src);
@@ -1352,7 +1361,7 @@ function vOkazje(v) {
         return `<tr${deal ? ' class="hit"' : ''}>
         <td><a href="${esc(it.url)}" target="_blank" rel="noopener">${it.img ? `<img class="dimg" src="${esc(it.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="muted">—</span>'}</a></td>
         <td class="name"><div class="nm" style="display:flex;gap:8px;align-items:flex-start">${m?.img ? `<img class="dcard" src="${esc(m.img)}" alt="" loading="lazy">` : ''}<div style="min-width:0">${m ? `${esc(m.name)} <span class="muted" style="font-weight:400">${esc(m.number || '')}</span>${m.idp ? ' ' + cmA(m.idp, m.name) : ''}<small>${esc(m.set || '')}</small>` : `<span class="muted">${esc(DK[it.det?.kind] || '?')}${it.det?.name_en ? ': ' + esc(it.det.name_en) + (it.det.number ? ' ' + esc(it.det.number) + (it.det.set_total ? '/' + esc(it.det.set_total) : '') : '') : ''}</span>`}
-          ${it.det?.language === 'ja' ? '<span class="badge">JP</span>' : ''}${it.det?.grade ? ` <span class="badge good">${esc(it.det.grade)}</span>` : ''}${qty > 1 ? ` <span class="badge">${qty} szt.</span>` : ''}
+          ${it.det?.language === 'ja' ? '<span class="badge">JP</span>' : ''}${it.det?.grade ? ` <span class="badge good">${esc(it.det.grade)}</span>` : ''}${qty > 1 ? ` <span class="badge">${qty} szt.</span>` : ''}${dealCondBadge(it)}
           <small title="${esc(it.title)}">„${esc(it.title.length > 70 ? it.title.slice(0, 70) + '…' : it.title)}”</small></div></div></td>
         <td><b>${P(it.price)}</b>${qty > 1 ? `<br><small class="muted">${P(it.price / qty)} / szt.</small>` : ''}<br><small class="muted">${SRC_L[it.src] || it.src}${it.city ? ' · ' + esc(it.city) : ''}${it.t ? ' · ' + agoPL(it.t) : ''}</small></td>
         <td>${ref ? `${E(ref.eur)}<br><small class="muted">≈ ${P(ref.eur * fx)}${ref.src === 'cm' ? ` · ${ref.n ?? '?'} ofert` : ' · trend (EN/NM w drodze)'}</small>` : m ? '<span class="muted">sprawdzam…</span>' : '<span class="muted" title="Rozszerzenie porównuje tylko jednoznacznie rozpoznane karty EN i sealed – JP, sloty i loty wymagają ręcznej oceny">—</span>'}</td>
