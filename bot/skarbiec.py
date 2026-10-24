@@ -50,7 +50,7 @@ DEFAULT_SETTINGS = {
     "profit_steps": [50, 100, 200, 400],   # alert, gdy pozycja w portfelu zyskała tyle %
     "weekly_summary": True,
     "summary_weekday": 0,        # 0 = poniedziałek
-    "pf_metric": "avg30",        # wycena portfela: avg30 | avg7 | avg1 | trend (brak średniej → trend)
+    "pf_metric": "avg7",         # wycena portfela: avg7 | avg30 | avg1 | trend (brak średniej → trend)
     "track_min_eur": 0.5,        # karty z portfela tańsze niż tyle (trend) = bulk: bez dziennej historii i alertów, wartość z dzisiejszego cennika
 }
 GRADE_REMIND_D = 30   # przypomnienie o ręcznej wycenie slabu (PSA/CGC…) co tyle dni
@@ -398,7 +398,7 @@ def main():
 
     def pf_price_on(key, d):
         """Cena do wyceny portfela w dniu d: wybrana średnia, a gdy jej brak – trend."""
-        idx = PF_METRICS.get(settings.get("pf_metric"), PF_METRICS["avg30"])[1]
+        idx = PF_METRICS.get(settings.get("pf_metric"), PF_METRICS["avg7"])[1]
         rows = hist.get(key, [])
         if not rows or rows[-1][0] != d:   # bulk bez historii (albo dziś bez pomiaru) – dzisiejszy cennik
             pr = price_of(key) if d == day else None
@@ -558,7 +558,7 @@ def main():
             steps = [s for s in settings["profit_steps"] if gain >= s and s > done]
             if steps:
                 alert("profit", f"💰 {nm}: {fpct(gain)} zysku",
-                      f"Wartość ({PF_METRICS.get(settings.get('pf_metric'), PF_METRICS['avg30'])[0]}) {pln(val)} przy koszcie {pln(cost)} ({qty} szt.). Rozważ sprzedaż części i odzyskanie kosztu.")
+                      f"Wartość ({PF_METRICS.get(settings.get('pf_metric'), PF_METRICS['avg7'])[0]}) {pln(val)} przy koszcie {pln(cost)} ({qty} szt.). Rozważ sprzedaż części i odzyskanie kosztu.")
                 st[f"pf:{h['uid']}:gain"] = max(steps)
         if h.get("date"):
             free = tax_free_from(h["date"])

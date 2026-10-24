@@ -155,7 +155,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
    kluczem z twojego hasła (PBKDF2, 310 000 iteracji). Hasło nigdy nie opuszcza przeglądarki.
    ============================================================ */
 const ITER = 310000;
-const DEFAULT_SETTINGS = { drop_alert_pct: 10, card_drop_alert_pct: 25, dip_alert_pct: 20, profit_steps: [50, 100, 200, 400], weekly_summary: true, summary_weekday: 0, pf_metric: 'avg30', sell_min_pct: 90, track_min_eur: 0.5, cm_fee_pct: 5 };
+const DEFAULT_SETTINGS = { drop_alert_pct: 10, card_drop_alert_pct: 25, dip_alert_pct: 20, profit_steps: [50, 100, 200, 400], weekly_summary: true, summary_weekday: 0, pf_metric: 'avg7', sell_min_pct: 90, track_min_eur: 0.5, cm_fee_pct: 5 };
 const KIND = { S: 'Karta', D: 'Display / box', E: 'ETB', B: 'Booster', O: 'Inny sealed' };
 const S = { pw: null, vault: null, vaultSha: null, vaultSalt: null, market: null, meta: null, catalog: null, catMap: null, tab: 'pulpit', wl: null, charts: [], readOnly: true, branch: null };
 
@@ -803,8 +803,8 @@ function alertList(list) {
 
 // ---------------- portfel: obliczenia ----------------
 // wycena portfela: średnia sprzedaży z Cardmarketu (cennik jest dobowy – bot zapisuje jeden pomiar dziennie); brak średniej → trend
-const PF_METRICS = { avg30: ['średnia 30 dni', 4], avg7: ['średnia 7 dni', 3], avg1: ['średnia z 1 dnia', 5], trend: ['trend', 1] };
-const pfMetric = () => { const m = { ...DEFAULT_SETTINGS, ...(S.vault?.settings || {}) }.pf_metric; return PF_METRICS[m] ? m : 'avg30'; };
+const PF_METRICS = { avg7: ['średnia 7 dni', 3], avg30: ['średnia 30 dni', 4], avg1: ['średnia z 1 dnia', 5], trend: ['trend', 1] };
+const pfMetric = () => { const m = { ...DEFAULT_SETTINGS, ...(S.vault?.settings || {}) }.pf_metric; return PF_METRICS[m] ? m : 'avg7'; };
 function pfAgo(key, days, idx) {
   const h = hist(key); if (!h.length) return null;
   const lim = addDays(h.at(-1)[0], -days); let v = null;
@@ -2574,6 +2574,8 @@ async function unlock(pw, remember) {
   enLiveRefresh();
   loadCatalog().catch(() => {}).then(syncTargets);
   // decyzja użytkownika 24.10.2026: próg bulk 0,5 € zamiast 1 € – raz przestaw zapisane ustawienie
+  // wycena portfela domyślnie wg średniej 7 dni (decyzja użytkownika 24.10.2026) – zapisane avg30 przestawiane raz
+  if (S.vault.settings && S.vault.settings.pf_metric !== 'avg7' && !S.vault.settings.pf7 && !S.readOnly) { S.vault.settings.pf_metric = 'avg7'; S.vault.settings.pf7 = true; saveVault('wycena portfela: średnia 7 dni'); }
   if (S.vault.settings?.track_min_eur === 1 && !S.vault.settings.bulk05 && !S.readOnly) { S.vault.settings.track_min_eur = 0.5; S.vault.settings.bulk05 = true; saveVault('próg bulk 0,5 €'); }
 }
 
