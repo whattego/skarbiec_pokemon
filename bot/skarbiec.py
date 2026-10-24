@@ -315,6 +315,9 @@ def main():
     exps.update({int(k): v for k, v in tcg_ja.items()})
     exps.update(expansion_names(nonsingles))
     exps.update({int(k): v for k, v in tcg_en.items()})
+    # najważniejsze: oficjalne nazwy z Cardmarketu (np. „30th Celebration JP”, „… Simplified Chinese”) – zapisuje je rozszerzenie Chrome
+    cm_names = (load_json(os.path.join(DOCS, "cm_expansions.json"), {}) or {}).get("exp", {})
+    exps.update({int(k): v for k, v in cm_names.items()})
     cats = []
     rows = []
     for pid, p in products.items():

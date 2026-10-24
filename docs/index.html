@@ -125,11 +125,13 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .job{display:grid;grid-template-columns:96px 1fr;gap:12px;padding:12px 0;border-bottom:1px solid var(--grid)}
 .job:last-child{border-bottom:0}
 .job>img,.ph img{width:96px;border-radius:8px;object-fit:cover;background:var(--surface-2)}
-.sc-card{display:grid;grid-template-columns:auto 52px 1fr;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--grid)}
+.sc-card{display:grid;grid-template-columns:auto 52px minmax(0,1fr);gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--grid)}
+.sc-card .nm{overflow-wrap:anywhere}
+.sc-card .badge{white-space:normal}
 .sc-card:first-of-type{border-top:0}
 .sc-card img{width:52px;border-radius:4px;background:var(--surface-2)}
 .sc-card .ctl{grid-column:3;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.sc-card select{max-width:100%}
+.sc-card select{width:100%;max-width:100%}
 .sc-card input[type=number]{width:72px}
 .phgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
 .ph{border:0;padding:0;background:none;cursor:pointer;text-align:left;font-size:11px;color:var(--muted)}
@@ -265,7 +267,10 @@ async function loadEN() {
     // opt_<idListy>.json = wynik optymalizatora (komplet z wysyłką) – osobno, nie są cenami pojedynczych kart
     const optFiles = all.filter(f => /^opt_.*\.json$/.test(f.name));
     S.opt = (await Promise.all(optFiles.map(f => GH.call(`/contents/en/${encodeURIComponent(f.name)}`, { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null)))).filter(Boolean);
-    const files = all.filter(f => f.name.endsWith('.json') && !['targets.json', 'history.json'].includes(f.name) && !/^opt_/.test(f.name));
+    // cmnums.json: kod i numer karty z tytułu produktu na Cardmarket (zbiera rozszerzenie) – do dopasowania kart JP/promo
+    if (all.some(f => f.name === 'cmnums.json'))
+      S.cmnums = (await GH.call('/contents/en/cmnums.json', { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null))?.p || {};
+    const files = all.filter(f => f.name.endsWith('.json') && !['targets.json', 'history.json', 'cmnums.json', 'verify.json'].includes(f.name) && !/^opt_/.test(f.name));
     const docs = await Promise.all(files.map(f => GH.call(`/contents/en/${encodeURIComponent(f.name)}`, { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null)));
     const m = new Map();
     for (const d of docs.filter(Boolean)) for (const [k, v] of Object.entries(d.items || {})) {
@@ -277,6 +282,37 @@ async function loadEN() {
 }
 const enOf = it => S.en?.get(keyOf(it)) || null;
 // lista kart dla skryptu Tampermonkey „Skarbiec – ceny EN/NM” (watchlisty + nie sprzedany portfel); jawna, ale w prywatnym repo
+// Karty do weryfikacji (skan JP/promo bez pewnego numeru): lista kandydatów → en/verify.json dla rozszerzenia,
+// które zapisze kod i numer każdego produktu (en/cmnums.json). Gdy numer się zgadza – poprawiamy pozycję w portfelu.
+const pendingVerify = () => (S.vault?.portfolio || []).filter(h => h.verify && !h.sold);
+async function syncVerify() {
+  if (S.readOnly || !GH.token || !PHOTOS.repo) return;
+  const req = pendingVerify().map(h => ({ key: h.uid, cands: h.verify.cands || [] }));
+  const json = JSON.stringify({ v: 1, req });
+  if (json === S._verify || (!req.length && !S._verify)) return;
+  try {
+    await PHOTOS.enqueue(async () => {
+      let sha; try { sha = (await GH.call('/contents/en/verify.json', {}, PHOTOS.repo)).sha; } catch (e) { if (!/ 404/.test(e.message)) throw e; }
+      if (!PHOTOS.branch) PHOTOS.branch = (await GH.call('', {}, PHOTOS.repo)).default_branch || 'main';
+      await GH.call('/contents/en/verify.json', { method: 'PUT', body: JSON.stringify({ message: `karty do weryfikacji numeru (${req.length})`, content: b64e(new TextEncoder().encode(json)), branch: PHOTOS.branch, ...(sha ? { sha } : {}) }) }, PHOTOS.repo);
+    });
+    S._verify = json;
+  } catch (e) { console.warn('weryfikacja kart:', e.message); }
+}
+async function applyVerify() {
+  if (!S.cmnums || S.readOnly) return;
+  let n = 0;
+  for (const h of pendingVerify()) {
+    const cands = (h.verify.cands || []).map(id => ({ idp: id }));
+    const hit = byNumber(h.verify, cands);
+    if (hit.length !== 1) continue;
+    const r = catRow(hit[0].idp);
+    Object.assign(h, { id: hit[0].idp, name: r ? r[1] : h.name, set: (r && S.catalog.exp[r[3]]) || h.set });
+    delete h.verify; n++;
+  }
+  if (n && await saveVault(`weryfikacja numerów: ${n} kart`)) toast(`Zweryfikowano ${n} kart po numerze z Cardmarketu ✓`, 4000);
+}
+
 async function syncTargets() {
   if (S.readOnly || !GH.token || !PHOTOS.repo) return;
   const seen = new Map();
@@ -317,7 +353,7 @@ function optFor(wl) {
 document.addEventListener('skarbiec-en-status', () => {
   try { S.enStatus = JSON.parse(document.documentElement.dataset.skarbiecEnStatus || 'null'); } catch { return; }
   if (!S.vault) return;   // jeszcze przed zalogowaniem – status pokaże się po wejściu
-  if (S.enStatus?.state === 'ok') loadEN().then(() => render());
+  if (S.enStatus?.state === 'ok') loadEN().then(async () => { await applyVerify(); render(); });
   else { const el = $('#en-status'); if (el) el.outerHTML = enStatusHTML(); }
 });
 // strażnik: brak wieści z karty Cardmarketu przez 60 s (zamknięta, uśpiona) → odblokuj przycisk zamiast wisieć na „sprawdzam…”
@@ -396,15 +432,18 @@ function seriesSum(items, idx = 1) {
 }
 function itemMeta(it) {
   const r = catRow(it.id);
-  const name = it.name || (r ? r[1] : `Produkt #${it.id}`);
-  const set = it.set || (r ? S.catalog.exp[r[3]] : '') || '';
+  // jak na Cardmarkecie: „Pikachu (30C 032)” – kod i numer z tytułu produktu (S.cmnums, zbiera rozszerzenie), bez ataków w nawiasie
+  const cm = S.cmnums?.[+it.id], base = baseName(it.name || (r ? r[1] : `Produkt #${it.id}`));
+  const name = cm?.[1] ? `${base.replace(/\s*\([^()]*\)\s*$/, '')} (${[cm[0], cm[1]].filter(Boolean).join(' ')})` : base;
+  const set = (r && S.catalog.exp[r[3]]) || it.set || '';   // oficjalna nazwa dodatku z Cardmarketu ma pierwszeństwo
   const kind = it.kind || (r ? S.catalog.kinds[r[2]] : '') || '';
   return { name: name + (it.holo ? ' (Reverse Holo)' : ''), set, kind };
 }
 async function loadCatalog() {
   if (S.catalog) return S.catalog;
-  if (!S._catP) S._catP = fetchPublic('catalog.json').then(c => {
+  if (!S._catP) S._catP = Promise.all([fetchPublic('catalog.json'), fetchPublic('cm_expansions.json').catch(() => null)]).then(([c, cm]) => {
     if (!c) throw new Error('Brak katalogu – bot jeszcze ani razu się nie uruchomił.');
+    Object.assign(c.exp, cm?.exp || {});   // oficjalne nazwy dodatków z Cardmarketu (rozszerzenie) – od razu, bez czekania na bota
     S.catalog = c; S.catMap = new Map(c.p.map(r => [r[0], r]));
     c.p.forEach(r => { r.lc = (r[1] + ' ' + (c.exp[r[3]] || '')).toLowerCase(); });
     return c;
@@ -443,7 +482,7 @@ async function saveVaultNow(msg) {
       const r = await GH.putFile('docs/vault.enc', JSON.stringify(blob), S.vaultSha, msg || 'skarbiec: zmiana');
       S.vaultSha = r.content.sha; S.vaultSaved = JSON.stringify(S.vault);
       toast(attempt ? 'Zapisano ✓ (połączone ze zmianami z innego urządzenia)' : 'Zapisano ✓ Bot uwzględni zmiany przy najbliższym pomiarze.');
-      syncTargets();
+      syncTargets(); syncVerify();
       return true;
     } catch (e) {
       if (/ 409| 422/.test(e.message) && attempt < 3) {
@@ -591,7 +630,7 @@ function vPulpit(v) {
     const box = $('#movers'); if (!box || S.tab !== 'pulpit') return;
     const rows = c.p.filter(r => c.kinds[r[2]] !== 'S' && r[4] >= 20 && r[8]).map(r => ({ r, ch: pct(r[4], r[8]) }));
     const up = rows.filter(x => x.ch >= 0.5).sort((a, b) => b.ch - a.ch).slice(0, 5), down = rows.filter(x => x.ch <= -0.5).sort((a, b) => a.ch - b.ch).slice(0, 5);
-    const t = list => !list.length ? '<p class="muted">Brak wyraźnych ruchów.</p>' : `<table class="tbl"><tr><th>Produkt</th><th>Trend</th><th>vs 30 dni</th></tr>${list.map(({ r, ch }) => `<tr class="click" data-act="detail" data-id="${r[0]}"><td class="name"><div class="nm">${esc(r[1])}<small>${esc(c.exp[r[3]] || KIND[c.kinds[r[2]]])}</small></div></td><td>${E(r[4])}</td><td class="${cls(ch)}">${arrow(ch)}${PC(ch)}</td></tr>`).join('')}</table>`;
+    const t = list => !list.length ? '<p class="muted">Brak wyraźnych ruchów.</p>' : `<table class="tbl"><tr><th>Produkt</th><th>Trend</th><th>vs 30 dni</th></tr>${list.map(({ r, ch }) => `<tr class="click" data-act="detail" data-id="${r[0]}"><td class="name"><div class="nm">${esc(baseName(r[1]))}<small>${esc(c.exp[r[3]] || KIND[c.kinds[r[2]]])}</small></div></td><td>${E(r[4])}</td><td class="${cls(ch)}">${arrow(ch)}${PC(ch)}</td></tr>`).join('')}</table>`;
     box.lastElementChild.outerHTML = rows.length ? `<div class="grid g2"><div><h3>Rosną</h3><div class="tblw">${t(up)}</div></div><div><h3>Spadają</h3><div class="tblw">${t(down)}</div></div></div>` : '<div class="muted">Brak danych sealed w cenniku.</div>';
   }).catch(e => { const b = $('#movers'); if (b) b.lastElementChild.textContent = e.message; });
 }
@@ -676,6 +715,8 @@ function vPortfel(v) {
   v.innerHTML = `
   <div class="spread"><div><h1>Portfel</h1><p class="sub">Co masz, ile za to dałeś i ile to jest warte dziś. Wartość według trendu Cardmarketu.</p></div>
     <button class="btn primary" data-act="addto" data-mode="portfel">+ Dodaj do portfela</button></div>
+  ${pendingVerify().length ? `<div class="banner" style="margin-bottom:12px">🔎 ${pendingVerify().length} kart czeka na weryfikację wersji (JP/promo). Rozszerzenie Chrome sprawdzi ich numery na Cardmarkecie i Skarbiec sam poprawi pozycje.
+    ${enScript() ? '<button class="btn sm" data-act="enRefresh">Sprawdź teraz</button>' : 'Zrobi to przy najbliższym sprawdzaniu cen na komputerze.'}</div>` : ''}
   <div class="grid g4">
     <div class="card stat"><div class="lbl">Wartość</div><div class="val">${P(pf.value)}</div><div class="note">≈ ${E(pf.value / fxNow())}</div></div>
     <div class="card stat"><div class="lbl">Koszt zakupu</div><div class="val">${P(pf.cost)}</div><div class="note">${pf.active.length} pozycji</div></div>
@@ -687,7 +728,7 @@ function vPortfel(v) {
   <div class="card" style="margin-top:12px"><h2>Pozycje</h2><div class="tblw"><table class="tbl">
     <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Najtaniej EN/NM / szt.</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
     ${pf.active.sort((a, b) => (b.value || 0) - (a.value || 0)).map(r => `<tr>
-      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${r.h.no ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set || KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
+      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${r.h.no && !S.cmnums?.[r.h.id] ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}${r.h.verify ? ' <span class="badge warn" title="Wersję (dodatek) poprawi rozszerzenie po sprawdzeniu numeru na Cardmarkecie"><span class="dot"></span>do weryfikacji</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set || KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
       <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
       <td>${enOf(r.h)?.min != null ? `${E(enOf(r.h).min)}<br><small class="muted">≈ ${P(enOf(r.h).min * fxNow())}</small>` : '<span class="muted">—</span>'}</td>
       <td class="${cls(r.plp)}">${r.pl != null ? `${r.pl >= 0 ? '+' : '−'}${P(Math.abs(r.pl))}<br><small>${PC(r.plp)}</small>` : '—'}</td>
@@ -740,7 +781,7 @@ function rynekResults() {
   const c = S.catalog, { rows, total } = searchCatalog(R.q, R);
   box.innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:6px">${total.toLocaleString('pl-PL')} wyników${total > rows.length ? ` · pokazuję ${rows.length}` : ''} · ceny z ${dPL(c.day)}</div>
   <div class="tblw"><table class="tbl"><tr><th>Produkt</th><th>Trend</th><th>vs śr. 30 dni</th><th>Śr. 7 dni</th></tr>
-  ${rows.map(r => { const ch = pct(r[4], r[8]); return `<tr class="click" data-act="detail" data-id="${r[0]}"><td class="name"><div class="nm">${esc(r[1])}<small>${esc([c.exp[r[3]], KIND[c.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td><b>${E(r[4])}</b></td><td class="${cls(ch)}">${arrow(ch)}${PC(ch)}</td><td>${E(r[7])}</td></tr>`; }).join('') || '<tr><td colspan="4" class="empty">Nic nie znaleziono.</td></tr>'}
+  ${rows.map(r => { const ch = pct(r[4], r[8]); return `<tr class="click" data-act="detail" data-id="${r[0]}"><td class="name"><div class="nm">${esc(baseName(r[1]))}<small>${esc([c.exp[r[3]], KIND[c.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td><b>${E(r[4])}</b></td><td class="${cls(ch)}">${arrow(ch)}${PC(ch)}</td><td>${E(r[7])}</td></tr>`; }).join('') || '<tr><td colspan="4" class="empty">Nic nie znaleziono.</td></tr>'}
   </table></div>`;
 }
 
@@ -809,27 +850,61 @@ function nameSim(a, b) {
 const JA_SCRIPT = /[぀-ヿ一-鿿]/;
 // Język wybieramy po piśmie nazwy, nie po ocenie modelu (odblask na toploaderze potrafi dać „ja” dla angielskiej karty).
 // Najpierw język zgodny z pismem, potem drugi.
-// loose = numer wpisany ręcznie: ufamy numerowi, nazwa nie musi pasować (np. „mew 129/103” → japońska „ミュウex”)
+// Karty EN: TCGdex (numer → produkt Cardmarketu) jest wiarygodny.
+// Karty JP i inne: TCGdex potrafi wskazać złą wersję językową (japoński Mew ex 129/103 → produkt chiński), więc dopasowujemy
+// w cenniku Cardmarketu po angielskiej nazwie, a wersję wybieramy po kodzie i numerze z tytułu produktu („Mew ex (m6a 129)”),
+// które zbiera rozszerzenie (S.cmnums). Bez numerów w pamięci – najlepsze przypuszczenie + weryfikacja później.
+// loose = numer wpisany ręcznie w wyszukiwarce: ufamy numerowi, nazwa nie musi pasować.
 async function resolveCard(c, loose) {
-  const order = JA_SCRIPT.test(c.name) ? ['ja', 'en'] : ['en', 'ja'];
-  for (const lang of order) { const r = await resolveIn(lang, c, loose); if (r.some(x => x.idp)) return r.map(x => ({ ...x, lang })); }
-  return catalogMatch(c);
+  const ja = c.language === 'ja' || JA_SCRIPT.test(c.name);
+  if (!ja) {
+    const r = await resolveIn('en', c, loose);
+    if (r.some(x => x.idp)) return r.map(x => ({ ...x, lang: 'en' }));
+  }
+  const cands = catalogCandidates(c);
+  const exact = byNumber(c, cands);
+  if (exact.length) return exact;
+  if (!ja) {   // karta EN spoza TCGdex – spróbuj jeszcze bazy JA (stare wydania), potem cennik
+    const r = await resolveIn('ja', c, loose);
+    const ok = r.filter(x => x.idp && expLang(catRow(x.idp)?.[3]) !== 'other');
+    if (ok.length) return ok.map(x => ({ ...x, lang: 'ja' }));
+  }
+  return cands;
 }
 // numer tak, jak jest wydrukowany: 129/103, 037/XY-P, SWSH020
 const printedNo = c => [c.number, c.set_total || c.set_code].filter(Boolean).join('/');
-// Ostatnia deska ratunku (np. japońskie promo XY-P, których TCGdex nie ma): cennik Cardmarketu ma nazwy
-// „Darkrai [Hypnoblast | Deep Wind]” – szukamy po angielskiej nazwie i atakach odczytanych przez model.
-function catalogMatch(c) {
+const baseName = n => String(n || '').replace(/\s*\[.*\]\s*$/, '').trim();   // „Darkrai [Hypnoblast | Deep Wind]” → „Darkrai”
+// język wydania po oficjalnej nazwie dodatku na Cardmarkecie
+function expLang(expId) {
+  const n = S.catalog?.exp[expId] || '';
+  if (/chinese|korean|indonesian|thai/i.test(n)) return 'other';
+  if (/\bJP\b|japanese/i.test(n) || JA_SCRIPT.test(n)) return 'ja';
+  return 'en';
+}
+// wszystkie wersje karty w cenniku (po angielskiej nazwie), najbardziej prawdopodobne pierwsze
+function catalogCandidates(c) {
   if (!S.catalog || !c.name_en) return [];
   const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const want = norm(c.name_en), atk = (c.attacks_en || []).map(norm).filter(Boolean);
-  // dodatki azjatyckie mają w katalogu nazwę japońską albo żadną – przy karcie JP stawiamy je wyżej, przy EN niżej
-  const asian = r => { const e = S.catalog.exp[r[3]]; return !e || JA_SCRIPT.test(e); };
-  const rows = S.catalog.p.filter(r => S.catalog.kinds[r[2]] === 'S' && norm(r[1].split(' [')[0]) === want).map(r => {
+  const ja = c.language === 'ja' || JA_SCRIPT.test(c.name);
+  const langScore = r => { const l = expLang(r[3]); return ja ? (l === 'ja' ? 2 : l === 'en' ? 1 : 0) : (l === 'en' ? 2 : 0); };
+  const rows = S.catalog.p.filter(r => S.catalog.kinds[r[2]] === 'S' && norm(baseName(r[1])) === want).map(r => {
     const has = norm((r[1].match(/\[(.*)\]/) || [])[1]);
-    return { r, hit: atk.filter(a => has.includes(a)).length, lang: asian(r) === (c.language === 'ja') ? 1 : 0 };
-  }).filter(x => !atk.length || x.hit > 0).sort((a, b) => b.hit - a.hit || b.lang - a.lang || (b.r[4] || 0) - (a.r[4] || 0)).slice(0, 12);
-  return rows.map(({ r }) => ({ tid: null, name: r[1], set: S.catalog.exp[r[3]] || `dodatek #${r[3]}`, no: printedNo(c), total: null, rarity: '', img: null, idp: r[0], lang: c.language, fromCatalog: true }));
+    return { r, hit: atk.filter(a => has.includes(a)).length, lang: langScore(r) };
+  }).filter(x => x.lang > 0).sort((a, b) => b.hit - a.hit || b.lang - a.lang || (b.r[4] || 0) - (a.r[4] || 0)).slice(0, 15);
+  const alts = rows.map(x => x.r[0]);
+  return rows.map(({ r }) => ({ tid: null, name: baseName(r[1]), set: S.catalog.exp[r[3]] || `dodatek #${r[3]}`, no: printedNo(c), total: null, rarity: '', img: null,
+    idp: r[0], lang: ja ? 'ja' : 'en', fromCatalog: true, verify: true, alts }));
+}
+// pewne trafienie: kod i numer z tytułu produktu (S.cmnums) zgadzają się z wydrukiem na karcie
+function byNumber(c, cands) {
+  const code = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const hits = cands.filter(x => {
+    const e = S.cmnums?.[x.idp]; if (!e) return false;
+    if (normNo(e[1]) !== normNo(c.number)) return false;
+    return !c.set_code || !e[0] || code(e[0]) === code(c.set_code);
+  });
+  return hits.map(x => ({ ...x, verify: false, exact: true, cmCode: S.cmnums[x.idp].slice(0, 2).join(' ') }));
 }
 async function resolveIn(lang, c, loose) {
   const sets = await td(`${lang}/sets`) || [], setById = new Map(sets.map(s => [s.id, s]));
@@ -885,9 +960,11 @@ async function scanJob(j) {
     j.cards = await Promise.all((out.cards || []).map(async det => {
       const cands = await resolveCard(det);
       // Reverse Holo tylko, gdy Cardmarket ma dla tej karty osobną cenę RH (np. karty LEGEND/ex są holo, ale nie „reverse”)
-      return { det, cands, sel: cands.length ? 0 : -1, holo: det.variant === 'reverse_holo' && !!catRow(cands[0]?.idp)?.[9], qty: 1, cost: '', on: cands.length === 1 && !!cands[0].idp && det.confidence === 'high' && !cands[0].fromCatalog };
+      return { det, cands, sel: cands.length ? 0 : -1, holo: det.variant === 'reverse_holo' && !!catRow(cands[0]?.idp)?.[9], qty: 1, cost: '', on: !!cands[0]?.idp && det.confidence === 'high' && (cands.length === 1 || !!cands[0].exact || !!cands[0].verify) };
     }));
     j.status = 'gotowe';
+    // tryb ciągły: zdjęcie bez karty (np. pusta taca po zmianie światła) → to jest tło; kolejnego takiego zdjęcia nie wyślemy
+    if (j.live && !j.cards.length && j.file.liveSample && LIVE.stream) { LIVE.base = j.file.liveSample; LIVE.last = j.file.liveSample; }
     liveDupScan();
   } catch (e) { j.status = 'błąd'; j.err = aiError(e); }
   scQueue();
@@ -959,7 +1036,9 @@ async function liveShot(manual) {
   const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
   if (!blob) return;
   LIVE.n++;
-  scAdd([new File([blob], `stojak-${Date.now()}.jpg`, { type: 'image/jpeg' })]);
+  const f = new File([blob], `stojak-${Date.now()}.jpg`, { type: 'image/jpeg' });
+  f.liveSample = LIVE.last;   // jeśli okaże się, że na zdjęciu nie ma karty – ten widok zostanie nowym „pustym tłem”
+  scAdd([f]);
   liveBeep();
   const n = $('#lv-n'); if (n) n.textContent = LIVE.n;
   liveSet('shot', `✓ Zeskanowano kartę nr ${LIVE.n}${manual ? ' (ręcznie)' : ''} – połóż następną`);
@@ -1081,10 +1160,10 @@ function scQueue() {
         ${k?.img ? `<img src="${esc(k.img)}" alt="" loading="lazy">` : '<span></span>'}
         <div style="min-width:0"><div class="nm">${esc(k ? k.name : c.det.name || '?')} <span class="muted" style="font-weight:400">${esc(printedNo(c.det) || (k ? `${k.no}/${k.total ?? '?'}` : ''))}</span>
           ${(k?.lang || c.det.language) === 'ja' ? '<span class="badge">JP</span>' : ''}${c.det.name_en && c.det.name_en !== (k?.name || c.det.name) && JA_SCRIPT.test(c.det.name) ? ` <span class="muted" style="font-weight:400">(${esc(c.det.name_en)})</span>` : ''}
-          ${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k?.fromCatalog ? '<span class="badge warn"><span class="dot"></span>z cennika CM po nazwie i atakach – wybierz wersję</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
+          ${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k?.exact ? `<span class="badge good" title="Kod i numer z karty zgadzają się z tytułem produktu na Cardmarkecie"><span class="dot"></span>✓ ${esc(k.cmCode)}</span>` : k?.verify ? '<span class="badge warn" title="Rozszerzenie Chrome sprawdzi numer na Cardmarkecie i samo poprawi wersję w portfelu"><span class="dot"></span>do weryfikacji</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
           <small>${esc(k ? [k.set, k.rarity].filter(Boolean).join(' · ') : 'nie dopasowano – ' + [c.det.set_code, c.det.language].filter(Boolean).join(' '))} · ${esc(c.det.position)}${pr ? ` · trend <b>${E(pr)}</b>` : ''}${k?.idp ? ` · <a href="${cmLink(k.idp, k.name)}" target="_blank" rel="noopener">Cardmarket ↗</a>` : ''}</small></div></div>
         <div class="ctl">
-          ${c.cands.length > 1 ? `<select data-j="${j.id}" data-c="${i}" data-f="sel" aria-label="Wariant">${c.cands.map((x, n) => `<option value="${n}" ${n === c.sel ? 'selected' : ''}>${esc(`${x.name} · ${x.set} ${x.no}`)}</option>`).join('')}<option value="-1" ${c.sel < 0 ? 'selected' : ''}>żadna z tych</option></select>` : ''}
+          ${c.cands.length > 1 ? `<select data-j="${j.id}" data-c="${i}" data-f="sel" aria-label="Wariant">${c.cands.map((x, n) => `<option value="${n}" ${n === c.sel ? 'selected' : ''}>${esc(`${x.name} · ${x.set}${S.cmnums?.[x.idp] ? ' · ' + S.cmnums[x.idp].slice(0, 2).join(' ') : ''}`)}</option>`).join('')}<option value="-1" ${c.sel < 0 ? 'selected' : ''}>żadna z tych</option></select>` : ''}
           ${k && catRow(k.idp)?.[9] ? `<label class="row" style="font-size:12px"><input type="checkbox" data-j="${j.id}" data-c="${i}" data-f="holo" ${c.holo ? 'checked' : ''}> Reverse Holo</label>` : ''}
           <label class="row" style="font-size:12px">szt. <input type="number" min="1" value="${c.qty}" data-j="${j.id}" data-c="${i}" data-f="qty"></label>
           <label class="row" style="font-size:12px">koszt zł <input type="number" min="0" step="0.01" value="${esc(c.cost)}" placeholder="0" data-j="${j.id}" data-c="${i}" data-f="cost"></label>
@@ -1104,7 +1183,8 @@ async function scApprove() {
   const recs = sel.map(({ j, c, card }) => {
     const r = catRow(card.idp);
     return { uid: uid(), id: card.idp, holo: !!c.holo, name: r ? r[1] : card.name, set: (r && S.catalog.exp[r[3]]) || card.set, kind: 'S',
-      qty: c.qty, date: SC.date, cost_pln: +(+c.cost || 0).toFixed(2), note: '', no: printedNo(c.det) || [card.no, card.total].filter(Boolean).join('/'), lang: card.lang || c.det.language, sold: null, tcgdex: card.tid, ...(card.img ? { img: card.img } : {}), ...(j.photo ? { photos: [j.photo] } : {}) };
+      qty: c.qty, date: SC.date, cost_pln: +(+c.cost || 0).toFixed(2), note: '', no: printedNo(c.det) || [card.no, card.total].filter(Boolean).join('/'), lang: card.lang || c.det.language, sold: null, tcgdex: card.tid,
+      ...(card.verify ? { verify: { name_en: c.det.name_en, number: c.det.number, set_code: c.det.set_code, cands: card.alts } } : {}), ...(card.img ? { img: card.img } : {}), ...(j.photo ? { photos: [j.photo] } : {}) };
   });
   const scans = new Map();
   for (const { j } of sel) if (j.photo) scans.set(j.photo, { path: j.photo, date: todayISO(), n: j.cards.length });
@@ -1246,18 +1326,21 @@ function mountPicker(d, onPick) {
     // więc numer sprawdzamy w TCGdex (EN i JA), a w cenniku szukamy po samej nazwie
     const toks = q.split(/\s+/), numTok = toks.find(t => /\d/.test(t) && (/\//.test(t) || /^[a-z]{0,5}\d{1,4}[a-z]?$/i.test(t)));
     const nameQ = toks.filter(t => t !== numTok).join(' ');
-    const row = r => `<tr><td class="name"><div class="nm">${esc(r[1])}<small>${esc([S.catalog.exp[r[3]] || `dodatek #${r[3]}`, KIND[S.catalog.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td>${E(r[4])}</td><td><button class="btn sm primary" data-pick="${r[0]}">Wybierz</button>${r[9] ? ` <button class="btn sm" data-pick="${r[0]}" data-holo="1" title="Wersja Reverse Holo">RH</button>` : ''}</td></tr>`;
+    const row = r => `<tr><td class="name"><div class="nm">${esc(baseName(r[1]))}${S.cmnums?.[r[0]] ? ` <span class="muted" style="font-weight:400">${esc(S.cmnums[r[0]].slice(0, 2).join(' '))}</span>` : ''}<small>${esc([S.catalog.exp[r[3]] || `dodatek #${r[3]}`, KIND[S.catalog.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td>${E(r[4])}</td><td><button class="btn sm primary" data-pick="${r[0]}">Wybierz</button>${r[9] ? ` <button class="btn sm" data-pick="${r[0]}" data-holo="1" title="Wersja Reverse Holo">RH</button>` : ''}</td></tr>`;
     const { rows, total } = searchCatalog(nameQ || q, { kind, sort: 'price', limit: 40 });
     res.innerHTML = `${numTok && nameQ ? '<div id="pk-num"><p class="muted"><span class="spin"></span> Szukam numeru ' + esc(numTok.toUpperCase()) + '…</p></div>' : ''}
       <table class="tbl"><tr><th>Produkt${numTok && nameQ ? ' (wszystkie wersje o tej nazwie)' : ''}</th><th>Trend</th><th></th></tr>${rows.map(row).join('') || '<tr><td colspan="3" class="empty">Nic nie znaleziono.</td></tr>'}</table>${total > rows.length ? `<p class="muted" style="font-size:12px">Pokazuję ${rows.length} z ${total} – doprecyzuj wyszukiwanie.</p>` : ''}`;
     if (numTok && nameQ) {
       const my = ++runId, [no, set = ''] = numTok.split('/');
-      resolveCard({ name: nameQ, name_en: nameQ, attacks_en: [], number: no, set_total: /^\d+$/.test(set) ? set : '', set_code: /^\d+$/.test(set) ? '' : set.toUpperCase(), language: JA_SCRIPT.test(nameQ) ? 'ja' : 'en' }, true).then(cands => {
+      const pseudo = { name: nameQ, name_en: nameQ, attacks_en: [], number: no, set_total: /^\d+$/.test(set) ? set : '', set_code: /^\d+$/.test(set) ? '' : set.toUpperCase(), language: JA_SCRIPT.test(nameQ) ? 'ja' : 'en' };
+      // 1) numer z tytułów produktów Cardmarketu (pewne, także JP i promo), 2) TCGdex EN
+      const byCm = byNumber(pseudo, searchCatalog(nameQ, { kind: 'S', sort: 'price', limit: 2000 }).rows.map(r => ({ idp: r[0], name: baseName(r[1]), set: S.catalog.exp[r[3]] || `dodatek #${r[3]}`, no: numTok.toUpperCase(), lang: expLang(r[3]) })));
+      resolveIn('en', pseudo, true).then(tcg => {
         const box = $('#pk-num', d); if (!box || my !== runId) return;
-        const exact = cands.filter(x => !x.fromCatalog && x.idp);
+        const seen = new Set(), exact = [...byCm, ...tcg.filter(x => x.idp).map(x => ({ ...x, lang: 'en' }))].filter(x => !seen.has(x.idp) && seen.add(x.idp));
         box.innerHTML = exact.length
-          ? `<h3 style="margin:4px 0 6px">Numer ${esc(numTok.toUpperCase())}</h3><table class="tbl">${exact.map(x => { const r = catRow(x.idp); return `<tr><td class="name"><div class="nm">${esc(x.name)} <span class="muted" style="font-weight:400">${esc(x.no)}${x.total ? '/' + x.total : ''}</span>${x.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}<small>${esc(x.set)}${r ? ' · ' + esc(r[1]) : ''}</small></div></td><td>${E(r?.[4])}</td><td><button class="btn sm primary" data-pick="${x.idp}">Wybierz</button></td></tr>`; }).join('')}</table>`
-          : `<p class="muted" style="font-size:12px">Numeru ${esc(numTok.toUpperCase())} nie ma w bazie TCGdex (np. japońskie promo). Wybierz z listy poniżej – Cardmarket nazywa karty „Nazwa [Atak 1 | Atak 2]”, dodatek bez nazwy to zwykle wydanie azjatyckie.</p>`;
+          ? `<h3 style="margin:4px 0 6px">Numer ${esc(numTok.toUpperCase())}</h3><table class="tbl">${exact.map(x => { const r = catRow(x.idp); return `<tr><td class="name"><div class="nm">${esc(x.name)} <span class="muted" style="font-weight:400">${esc(x.no)}${x.total ? '/' + x.total : ''}</span>${x.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}<small>${esc(x.set)}</small></div></td><td>${E(r?.[4])}</td><td><button class="btn sm primary" data-pick="${x.idp}">Wybierz</button></td></tr>`; }).join('')}</table>`
+          : `<p class="muted" style="font-size:12px">Numer ${esc(numTok.toUpperCase())} nie jest jeszcze znany. Wybierz wersję z listy poniżej po nazwie dodatku (np. „XY Promos”, „30th Celebration JP”). Numery uzupełnia rozszerzenie przy sprawdzaniu cen – potem wyszukiwanie po numerze trafia od razu.</p>`;
       });
     }
   };
@@ -1537,7 +1620,7 @@ async function unlock(pw, remember) {
   S.market ||= { h: {}, fx: {}, pv: [], alerts: [], state: {} };
   shell();
   loadCatalog().then(() => { if (S.tab !== 'rynek') render(); }).catch(() => {});
-  loadEN().then(() => { if (S.en?.size && ['watch', 'portfel'].includes(S.tab)) render(); });
+  loadEN().then(async () => { await loadCatalog().catch(() => {}); applyVerify(); syncVerify(); if (S.en?.size && ['watch', 'portfel'].includes(S.tab)) render(); });
   loadCatalog().catch(() => {}).then(syncTargets);
 }
 
