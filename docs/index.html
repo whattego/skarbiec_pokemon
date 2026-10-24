@@ -1097,7 +1097,7 @@ function vPortfel(v) {
     <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Najtaniej EN/NM / szt.</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
     ${pfGroups(pf.active).map(g => `<tr class="grp click" data-act="pfgrp" data-set="${esc(g.bulk ? '+bulk' : g.set)}"><td colspan="9"><span class="muted">${g.open ? '▾' : '▸'}</span> <b>${esc(g.set)}</b>${g.lang ? ' <span class="badge">JP</span>' : ''}
       <span class="muted">· ${g.n} ${plKart(g.n)} · </span>${P(g.value)}${g.cost ? ` <span class="${cls(pct(g.value, g.cost))}">${PC(pct(g.value, g.cost))}</span>` : ''}${g.bulk && !S.readOnly && g.rows.some(r => r.h.photos?.length || r.h.crop) ? ` <button class="btn sm" data-act="bulkphotos" style="margin-left:8px">🧹 Usuń moje zdjęcia bulk</button>` : ''}</td></tr>` + (g.open ? g.rows.map(r => `<tr>
-      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${r.h.no && !S.cmnums?.[r.h.id] ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}${r.h.grade?.by ? ` <span class="badge good" title="${esc(r.h.grade.cert ? 'certyfikat ' + r.h.grade.cert : 'karta oceniona')}">${esc(gradeLbl(r.h))}</span>` : ''}${{ listed: ` <span class="badge good" title="${esc(sellTip(r.h))}">CM ${E(S.listed?.[r.h.uid]?.price)}${S.listed?.[r.h.uid]?.miss ? ' ?' : ''}</span>`, wait: ' <span class="badge" title="Rozszerzenie wystawi ją przy najbliższym przebiegu">na sprzedaż – czeka</span>', err: ` <span class="badge warn" title="${esc(S.listed?.[r.h.uid]?.err || '')}"><span class="dot"></span>wystawienie nie wyszło</span>` }[sellState(r.h)] || ''}${r.h.verify ? ' <span class="badge warn" title="Wersję (dodatek) poprawi rozszerzenie po sprawdzeniu numeru na Cardmarkecie"><span class="dot"></span>do weryfikacji</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set ? '' : KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
+      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${r.h.no && !S.cmnums?.[r.h.id] ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}${r.h.grade?.by ? ` <span class="badge good" title="${esc(r.h.grade.cert ? 'certyfikat ' + r.h.grade.cert : 'karta oceniona')}">${esc(gradeLbl(r.h))}</span>` : ''}${{ listed: ` <span class="badge good" title="${esc(sellTip(r.h))}">CM ${E(S.listed?.[r.h.uid]?.price)}${S.listed?.[r.h.uid]?.miss ? ' ?' : ''}</span>`, wait: ' <span class="badge" title="Rozszerzenie wystawi ją przy najbliższym przebiegu">na sprzedaż – czeka</span>', err: ` <span class="badge warn" title="${esc(S.listed?.[r.h.uid]?.err || '')}"><span class="dot"></span>wystawienie nie wyszło</span>` }[sellState(r.h)] || ''}${r.h.verify ? ' <span class="badge warn" title="Wersję (dodatek) poprawi rozszerzenie po sprawdzeniu numeru na Cardmarkecie"><span class="dot"></span>do weryfikacji</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set ? '' : KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : !S.readOnly && !isBulk(r) ? `<button class="btn sm" data-act="holdphotoadd" data-uid="${r.h.uid}" title="Dodaj własne zdjęcie tej karty (np. gdy podrożała ponad próg bulk)" style="margin-top:4px">📷 +</button>` : ''}</td>
       <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.h.grade?.by ? `<br><small class="${gradeDue(r.h) ? 'down' : 'muted'}">${r.graded ? `wycena ręczna ${dPL(r.h.grade.t)}${gradeDue(r.h) ? ' · do aktualizacji' : ''}` : 'wpisz wycenę slabu'}</small>${r.graded && r.raw != null ? `<br><small class="muted" title="Cena karty bez gradingu (${PF_METRICS[pfMetric()][0]})">bez gradingu ${P(r.raw)}</small>` : ''}` : r.unsure ? '<br><small class="muted" title="Wersja karty jeszcze niepewna – liczę najniższą cenę spośród możliwych wersji">minimum · do weryfikacji</small>' : r.fb ? '<br><small class="muted" title="Cardmarket nie podaje dla tej pozycji wybranej średniej">wg trendu</small>' : r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
       <td>${enOf(r.h)?.min != null ? `${E(enOf(r.h).min)}<br><small class="muted">≈ ${P(enOf(r.h).min * fxNow())}</small>` : '<span class="muted">—</span>'}</td>
       <td class="${cls(r.plp)}">${r.pl != null ? `${r.pl >= 0 ? '+' : '−'}${P(Math.abs(r.pl))}<br><small>${PC(r.plp)}</small>` : '—'}</td>
@@ -1627,6 +1627,24 @@ function liveDupScan() {
     if (!b.dup && b.t - a.t < 30e3 && sig(a) === sig(b)) { b.dup = true; b.cards.forEach(c => { c.on = false; }); }   // raz – potem decyduje użytkownik
   }
 }
+// własne zdjęcia dodane ręcznie do pozycji portfela (np. karta z bulku podrożała ponad próg) → foto/ w prywatnym repo + h.photos
+async function addHoldingPhotos(h, files) {
+  if (S.readOnly || !GH.token || !files?.length) return 0;
+  const paths = [];
+  for (const file of files) {
+    let blob = await scaleImage(file, 3024, 'image/webp', 0.9);
+    if (blob.type !== 'image/webp') blob = await scaleImage(file, 3024, 'image/jpeg', 0.9);
+    const d = todayISO(), path = `foto/${d.slice(0, 4)}/${d.slice(5, 7)}/${d}-${uid()}.${blob.type === 'image/webp' ? 'webp' : 'jpg'}`;
+    await PHOTOS.put(path, blob, `foto: ${itemMeta(h).name}`);
+    PHOTOS.urls.set(path, Promise.resolve(URL.createObjectURL(blob)));
+    paths.push(path);
+  }
+  h.photos = [...(h.photos || []), ...paths];
+  return paths.length;
+}
+function pickPhotoFiles() {   // wybór zdjęć z dysku / aparatu telefonu
+  return new Promise(ok => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.multiple = true; i.onchange = () => ok([...i.files]); i.click(); });
+}
 async function savePhoto(j) {   // każde zrobione zdjęcie trafia do prywatnego repo, niezależnie od tego, co z niego dodasz
   if (S.readOnly || !GH.token || j.photo) return;
   if (j.photoP) return j.photoP;   // już się wysyła (ze skanowania) – nie wysyłaj drugi raz, poczekaj na tamto
@@ -1862,7 +1880,7 @@ function scQueue() {
           ${k && catRow(k.idp)?.[9] ? `<label class="row" style="font-size:12px"><input type="checkbox" data-j="${j.id}" data-c="${i}" data-f="holo" ${c.holo ? 'checked' : ''}> Reverse Holo</label>` : ''}
           <label class="row" style="font-size:12px">szt. <input type="number" min="1" value="${c.qty}" data-j="${j.id}" data-c="${i}" data-f="qty"></label>
           <label class="row" style="font-size:12px">koszt zł <input type="number" min="0" step="0.01" value="${esc(c.cost)}" placeholder="0" data-j="${j.id}" data-c="${i}" data-f="cost"></label>
-          ${!k ? `<button class="btn sm" data-act="scManual" data-j="${j.id}" data-c="${i}">Wybierz ręcznie</button>` : ''}
+          <button class="btn sm${k ? '' : ' primary'}" data-act="scManual" data-j="${j.id}" data-c="${i}" title="Zła karta albo brak dopasowania – wyszukaj w cenniku (także „Nazwa (KOD NR)” jak na Cardmarkecie)">🔎 Wyszukaj ręcznie</button>
         </div></div>`; }).join('')}
     </div></div>`).join('')}`;
   // karty spoza TCGdex: zdjęcie z Cardmarketu, jeśli rozszerzenie już je skopiowało (inaczej zostaje twoje zdjęcie)
@@ -2183,6 +2201,7 @@ function formHolding(base, existing) {
       <label class="f">Waluta<select id="h-cur"><option value="PLN">PLN</option><option value="EUR">EUR (przeliczę po kursie ${fxNow().toFixed(4).replace('.', ',')})</option></select></label>
       ${existing?.verify ? `<label class="f" style="grid-column:1/-1">Wersja karty (do weryfikacji – wybierz właściwą, jeśli wiesz)<select id="h-ver">${[existing.id, ...(existing.verify.cands || [])].filter((v, i, a) => a.indexOf(v) === i).map(id => { const r = catRow(id), cn = S.cmnums?.[id]; return `<option value="${id}" ${id === existing.id ? 'selected' : ''}>${esc(`${r ? baseName(r[1]) : '#' + id} · ${r ? S.catalog.exp[r[3]] || '' : ''}${cn ? ' · ' + cn.slice(0, 2).join(' ') : ''} · ${r?.[4] != null ? E(r[4]) : '—'}${id === existing.id ? ' (obecnie)' : ''}`)}</option>`; }).join('')}</select></label>` : ''}
       <label class="f" style="grid-column:1/-1">Notatka (np. gdzie kupione, stan)<input type="text" id="h-n" value="${esc(existing?.note || '')}"></label>
+      ${S.readOnly ? '' : `<label class="f" style="grid-column:1/-1">Dodaj własne zdjęcia karty${existing?.photos?.length ? ` (masz już ${existing.photos.length})` : ''}<input type="file" id="h-ph" accept="image/*" multiple></label>`}
       <label class="f">Grading<select id="h-gby"><option value="">brak – karta bez oceny</option>${[...new Set([...GRADERS, existing?.grade?.by].filter(Boolean))].map(g => `<option ${existing?.grade?.by === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></label>
       <label class="f">Ocena<input type="text" id="h-gg" value="${esc(existing?.grade?.g || '')}" placeholder="np. 10, 9.5"></label>
       <label class="f">Nr certyfikatu<input type="text" id="h-gc" value="${esc(existing?.grade?.cert || '')}" inputmode="numeric"></label>
@@ -2209,6 +2228,8 @@ function formHolding(base, existing) {
         rec.grade = g;
       } else delete rec.grade;
       if (!existing) S.vault.portfolio = [...(S.vault.portfolio || []), rec];
+      const phf = [...($('#h-ph', d)?.files || [])];
+      if (phf.length) { $('#h-ok', d).disabled = true; $('#h-ok', d).innerHTML = '<span class="spin"></span> Wysyłam zdjęcia…'; try { await addHoldingPhotos(rec, phf); } catch (e) { toast(`Zdjęcie nie zapisane: ${e.message}`, 6000); } }
       d.close(); await saveVault(`portfel: ${existing ? 'zmiana' : '+'} ${m.name}`); render();
     };
     if (existing) {
@@ -2382,8 +2403,10 @@ const ACT = {
   scManual: a => {
     const j = SC.jobs.find(x => x.id === a.dataset.j), c = j?.cards[+a.dataset.c]; if (!c) return;
     modal('Wybierz kartę ręcznie', pickerHTML(), d => {
-      mountPicker(d, it => { const r = catRow(it.id); c.cands = [{ tid: null, name: r?.[1] || `#${it.id}`, set: S.catalog.exp[r?.[3]] || '', no: c.det.number, total: c.det.set_total, rarity: '', img: null, idp: it.id }]; c.sel = 0; c.holo = it.holo; c.on = true; d.close(); scQueue(); });
-      $('#pk-q', d).value = `${c.det.name_en || c.det.name} ${printedNo(c.det)}`.trim();   // angielska nazwa + numer z karty
+      mountPicker(d, it => { const r = catRow(it.id); c.cands = [{ tid: null, name: r ? baseName(r[1]) : `#${it.id}`, set: S.catalog.exp[r?.[3]] || '', no: c.det.number, total: c.det.set_total, rarity: '', img: null, idp: it.id }]; c.sel = 0; c.holo = it.holo; c.on = true; d.close(); scQueue(); });   // wybór ręczny = jedna pewna wersja (bez weryfikacji)
+      // angielska nazwa + kod setu i numer z karty w formacie Cardmarketu („Venusaur (s8a-P 002)”), bez kodu – numer z karty
+      const nm = c.det.name_en || c.det.name, no = String(c.det.number || '').trim();
+      $('#pk-q', d).value = (c.det.set_code && no ? `${nm} (${c.det.set_code} ${no})` : `${nm} ${printedNo(c.det)}`).trim();
     });
   },
   photo: a => openPhotos([a.dataset.path]),
@@ -2414,6 +2437,13 @@ const ACT = {
     if (v != null && n > 0 && n < 100) saveDealsCfg({ ...cfg, threshold: n });
   },
   pfgrp: a => { const c = pfClosed(), k = a.dataset.set; c.has(k) ? c.delete(k) : c.add(k); ls.set('skarbiec_pf_closed', JSON.stringify([...c])); render(); },
+  holdphotoadd: async a => {
+    const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (!h) return;
+    const files = await pickPhotoFiles(); if (!files.length) return;
+    toast('Wysyłam zdjęcie…');
+    try { const n = await addHoldingPhotos(h, files); await saveVault(`portfel: zdjęcie ${itemMeta(h).name}`); render(); toast(`Dodano ${n} zdj.`); }
+    catch (e) { toast(/^GitHub 40[34]/.test(e.message) ? `Brak dostępu do ${PHOTOS.repo} – dodaj to repozytorium do tokenu GitHub.` : e.message, 6000); }
+  },
   holdphotos: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.photos?.length) openPhotos(h.photos, itemMeta(h).name); },
 };
 document.addEventListener('click', e => {
