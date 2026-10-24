@@ -1320,7 +1320,7 @@ const SCAN_SCHEMA = { type: 'object', additionalProperties: false, required: ['c
     language: { type: 'string', enum: ['en', 'ja', 'other'] }, variant: { type: 'string', enum: ['normal', 'holo', 'reverse_holo', 'unknown'] },
     position: { type: 'string' }, box: { type: 'array', items: { type: 'integer' } },
     slab_company: { type: 'string' }, slab_grade: { type: 'string' }, slab_cert: { type: 'string' }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] } } } } } };
-const SC = { jobs: [], cost: 0, date: todayISO(), busy: 0 };
+const SC = { jobs: [], cost: 0, date: todayISO(), busy: 0, seq: 0 };   // seq: numer zdjęcia w sesji (kolejność w stosie kart)
 let _ai = null;
 async function aiClient() {
   const key = ls.get('skarbiec_ak');
@@ -1657,7 +1657,7 @@ function scPump() {
 }
 function scAdd(files) {
   for (const f of files) if (/^image\//.test(f.type) || /\.(heic|jpe?g|png|webp)$/i.test(f.name))
-    SC.jobs.push({ id: uid(), file: f, url: URL.createObjectURL(f), status: 'czeka', cards: [], t: Date.now(), live: f.name.startsWith('stojak-') });
+    SC.jobs.push({ id: uid(), file: f, url: URL.createObjectURL(f), status: 'czeka', cards: [], t: Date.now(), live: f.name.startsWith('stojak-'), seq: ++SC.seq });
   scQueue(); scPump();
 }
 const scSelected = () => SC.jobs.flatMap(j => j.cards.filter(c => c.on && c.cands[c.sel]).map(c => ({ j, c, card: c.cands[c.sel] })));
@@ -1855,7 +1855,7 @@ function scQueue() {
         ${k?.img ? `<img src="${esc(k.img)}" alt="" loading="lazy">` : k?.idp ? `<img data-cmimg="${k.idp}" src="${c.cropUrl || j.url}" alt="" title="Twoje zdjęcie – zdjęcie z Cardmarketu pojawi się po sprawdzeniu cen przez rozszerzenie">` : '<span></span>'}
         <div style="min-width:0"><div class="nm">${esc(k ? k.name : c.det.name || '?')} <span class="muted" style="font-weight:400">${esc(printedNo(c.det) || (k ? `${k.no}/${k.total ?? '?'}` : ''))}</span>
           ${(k?.lang || c.det.language) === 'ja' ? '<span class="badge">JP</span>' : ''}${c.det.name_en && c.det.name_en !== (k?.name || c.det.name) && JA_SCRIPT.test(c.det.name) ? ` <span class="muted" style="font-weight:400">(${esc(c.det.name_en)})</span>` : ''}
-          ${c.det.footer && c.det.set_code ? `<span class="badge" title="Odczytane z powiększonego dolnego paska karty">${esc(c.det.set_code)}</span>` : ''}${c.det.slab_company ? `<span class="badge good" title="Slab – wycenę wpiszesz w portfelu">${esc(`${c.det.slab_company} ${c.det.slab_grade || ''}`.trim())}</span>` : ''}${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k?.exact ? `<span class="badge good" title="Kod i numer z karty zgadzają się z tytułem produktu na Cardmarkecie"><span class="dot"></span>✓ ${esc(k.cmCode)}</span>` : k?.verify ? '<span class="badge warn" title="Rozszerzenie Chrome sprawdzi numer na Cardmarkecie i samo poprawi wersję w portfelu"><span class="dot"></span>do weryfikacji</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
+          ${pr != null && pr >= bulkMin() ? `<span class="badge good" title="Warta co najmniej ${String(bulkMin()).replace('.', ',')} € – schowaj do koszulki">💎</span>` : ''}${c.det.footer && c.det.set_code ? `<span class="badge" title="Odczytane z powiększonego dolnego paska karty">${esc(c.det.set_code)}</span>` : ''}${c.det.slab_company ? `<span class="badge good" title="Slab – wycenę wpiszesz w portfelu">${esc(`${c.det.slab_company} ${c.det.slab_grade || ''}`.trim())}</span>` : ''}${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k?.exact ? `<span class="badge good" title="Kod i numer z karty zgadzają się z tytułem produktu na Cardmarkecie"><span class="dot"></span>✓ ${esc(k.cmCode)}</span>` : k?.verify ? '<span class="badge warn" title="Rozszerzenie Chrome sprawdzi numer na Cardmarkecie i samo poprawi wersję w portfelu"><span class="dot"></span>do weryfikacji</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
           <small>${esc(k ? [k.set, k.rarity].filter(Boolean).join(' · ') : 'nie dopasowano – ' + [c.det.set_code, c.det.language].filter(Boolean).join(' '))} · ${esc(c.det.position)}${pr ? ` · trend <b>${E(pr)}</b>` : ''}${k?.idp ? ` · <a href="${cmLink(k.idp, k.name)}" target="_blank" rel="noopener">Cardmarket ↗</a>` : ''}</small></div></div>
         <div class="ctl">
           ${c.cands.length > 1 ? `<select data-j="${j.id}" data-c="${i}" data-f="sel" aria-label="Wariant">${c.cands.map((x, n) => `<option value="${n}" ${n === c.sel ? 'selected' : ''}>${esc(`${x.name} · ${x.set}${S.cmnums?.[x.idp] ? ' · ' + S.cmnums[x.idp].slice(0, 2).join(' ') : ''}`)}</option>`).join('')}<option value="-1" ${c.sel < 0 ? 'selected' : ''}>żadna z tych</option></select>` : ''}
@@ -1904,6 +1904,7 @@ async function scApprove() {
     // karty JP/promo do weryfikacji albo bez zdjęcia z Cardmarketu: na telefonie zleć komputerowi, na komputerze uruchom od razu
     if (recs.some(r => r.verify || !r.img)) { if (enScript()) ACT.enRefresh({ dataset: { scope: 'p' } }); else requestDesktop('en:p'); }
     scUploadAfter(tasks);   // w tle – nie czekamy
+    scValuableList(tasks);   // karty ≥ progu bulk: lista do schowania w koszulki
   } catch (e) {
     toast('Nie dodano do portfela: ' + e.message, 6000);
   } finally {
@@ -1911,6 +1912,21 @@ async function scApprove() {
     SC.jobs = SC.jobs.filter(j => j.cards.some(c => !c.added && c.cands.length) || j.status !== 'gotowe' || (SC.upl && !j.photo && !j.noPhoto));
     render();
   }
+}
+// Po dodaniu do portfela: lista kart wartych ≥ progu bulk (0,5 €) z tego skanu – z numerem w kolejności skanowania, żeby
+// znaleźć je w stosie i schować w koszulki (życzenie użytkownika 24.10.2026). Karty do weryfikacji – po cenie minimalnej, oznaczone.
+function scValuableList(tasks) {
+  const fx = fxNow(), min = bulkMin();
+  const rows = tasks.map(t => ({ t, pos: t.j.seq || 0, eur: scPrice(t.card, t.c.holo) }))
+    .filter(x => x.eur != null && x.eur >= min).sort((a, b) => a.pos - b.pos);
+  if (!rows.length) return;
+  const sum = rows.reduce((a, x) => a + x.eur * (x.t.c.qty || 1), 0);
+  modal(`💎 Do koszulek: ${rows.length} ${plKart(rows.length)} od ${String(min).replace('.', ',')} €`, `<p class="muted" style="margin-top:0;font-size:13px">W kolejności skanowania (#1 = pierwsza zeskanowana). Razem ok. ${E(sum)} (≈ ${P(sum * fx)}). Reszta (${tasks.length - rows.length}) to bulk.</p>
+    <div class="stack" style="gap:8px;max-height:60vh;overflow:auto">${rows.map(x => { const c = x.t.c, k = x.t.card, img = c.cropUrl || k.img || x.t.j.url;
+      return `<div class="row" style="gap:10px;align-items:center;flex-wrap:nowrap"><b style="min-width:42px">#${x.pos}</b>${img ? `<img src="${esc(img)}" alt="" style="width:48px;border-radius:4px;flex:none">` : ''}
+        <div style="min-width:0;flex:1"><b>${esc(baseName(k.name))}</b> <span class="muted">${esc(printedNo(c.det) || '')}</span>${c.holo ? ' <span class="badge">RH</span>' : ''}${k.verify ? ' <span class="badge warn" title="Wersja jeszcze niepewna – cena minimalna">do weryfikacji</span>' : ''}<br><small class="muted">${esc(k.set || '')}</small></div>
+        <div style="text-align:right;white-space:nowrap"><b>${E(x.eur)}</b><br><small class="muted">≈ ${P(x.eur * fx)}</small></div></div>`; }).join('')}</div>
+    <div class="row" style="margin-top:14px"><button class="btn primary" data-close>Schowane</button></div>`);
 }
 // zdjęcia (jeśli nie wysłały się przy skanowaniu) i wycinki po kolei; na końcu jeden zapis portfela z uzupełnionymi ścieżkami
 async function scUploadAfter(tasks) {
