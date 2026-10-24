@@ -788,9 +788,12 @@ function holdingsCalc() {
     row.free = h.date ? taxFreeFrom(h.date) : null;
     (h.sold ? sold : active).push(row);
   }
-  const value = active.reduce((a, r) => a + (r.value || 0), 0), cost = active.reduce((a, r) => a + r.cost, 0);
+  // bulk (karty poniżej progu) nie wchodzi do wartości ani kosztu portfela – pokazujemy go osobno (decyzja użytkownika 24.10.2026)
+  const main = active.filter(r => !isBulk(r)), bulk = active.filter(isBulk);
+  const value = main.reduce((a, r) => a + (r.value || 0), 0), cost = main.reduce((a, r) => a + r.cost, 0);
   const realized = sold.reduce((a, r) => a + ((+r.h.sold.price_pln || 0) - r.cost), 0);
-  return { active, sold, value, cost, realized, unpriced: active.filter(r => r.value == null).length };
+  return { active, sold, value, cost, realized, unpriced: main.filter(r => r.value == null).length, nMain: main.length,
+    bulkN: bulk.reduce((a, r) => a + (r.h.qty || 1), 0), bulkValue: bulk.reduce((a, r) => a + (r.value || 0), 0) };
 }
 
 // ============================================================
@@ -835,7 +838,7 @@ function vPulpit(v) {
      2. <a href="#" data-act="tab" data-id="portfel">Portfel</a> – wpisz karty i sealed, które już masz (cena zakupu i data).<br>
      3. <a href="#" data-act="tab" data-id="ustawienia">Ustawienia</a> – sprawdź alerty i wyślij wiadomość testową na Discord.</div>` : ''}
   <div class="grid g4">
-    <div class="card stat"><div class="lbl">Wartość portfela</div><div class="val">${P(pf.value)}</div><div class="note">${pf.active.length} pozycji · wg trendu Cardmarketu${pf.unpriced ? ` · ${pf.unpriced} bez ceny` : ''}</div></div>
+    <div class="card stat"><div class="lbl">Wartość portfela</div><div class="val">${P(pf.value)}</div><div class="note">${pf.nMain} pozycji${pf.bulkN ? ` · bez bulku (${P(pf.bulkValue)})` : ''}${pf.unpriced ? ` · ${pf.unpriced} bez ceny` : ''}</div></div>
     <div class="card stat"><div class="lbl">Zysk / strata (niezrealizowany)</div><div class="val ${cls(plp)}">${pf.cost ? (pf.value - pf.cost >= 0 ? '+' : '−') + P(Math.abs(pf.value - pf.cost)) : '—'}</div><div class="note"><span class="${cls(plp)}">${arrow(plp)}${PC(plp)}</span> · koszt ${P(pf.cost)}</div></div>
     <div class="card stat"><div class="lbl">Zrealizowany zysk</div><div class="val ${cls(pf.realized)}">${pf.sold.length ? (pf.realized >= 0 ? '+' : '−') + P(Math.abs(pf.realized)) : '—'}</div><div class="note">${pf.sold.length} sprzedanych pozycji</div></div>
     <div class="card stat"><div class="lbl">Alerty (7 dni)</div><div class="val">${a7}</div><div class="note">${wls.length} watchlist · ${(S.meta?.tracked ?? 0)} śledzonych pozycji</div></div>
@@ -1063,10 +1066,10 @@ function vPortfel(v) {
   ${pf.active.filter(r => gradeDue(r.h)).map(r => `<div class="banner" style="margin-bottom:12px">🏷️ <b>${esc(r.m.name)} ${esc(gradeLbl(r.h))}</b>: ${r.graded ? `wycena z ${dPL(r.h.grade.t)} ma ponad ${GRADE_REMIND_D} dni` : 'slab nie ma jeszcze wyceny – liczę go po cenie karty bez gradingu'}.
     <button class="btn sm primary" data-act="gradeval" data-uid="${r.h.uid}">Wyceń teraz</button> <a href="${esc(gradeSoldUrl(r.h))}" target="_blank" rel="noopener">sprzedane na eBay ↗</a></div>`).join('')}
   <div class="grid g4">
-    <div class="card stat"><div class="lbl">Wartość</div><div class="val">${P(pf.value)}</div><div class="note">≈ ${E(pf.value / fxNow())}</div></div>
-    <div class="card stat"><div class="lbl">Koszt zakupu</div><div class="val">${P(pf.cost)}</div><div class="note">${pf.active.length} pozycji</div></div>
+    <div class="card stat"><div class="lbl">Wartość</div><div class="val">${P(pf.value)}</div><div class="note">≈ ${E(pf.value / fxNow())}${pf.bulkN ? ` · bez bulku (${pf.bulkN} ${plKart(pf.bulkN)} ≈ ${P(pf.bulkValue)})` : ''}</div></div>
+    <div class="card stat"><div class="lbl">Koszt zakupu</div><div class="val">${P(pf.cost)}</div><div class="note">${pf.nMain} pozycji${pf.bulkN ? ' · bez bulku' : ''}</div></div>
     <div class="card stat"><div class="lbl">Zysk / strata</div><div class="val ${cls(plp)}">${pf.cost ? (pf.value - pf.cost >= 0 ? '+' : '−') + P(Math.abs(pf.value - pf.cost)) : '—'}</div><div class="note ${cls(plp)}">${arrow(plp)}${PC(plp)}</div></div>
-    <div class="card stat"><div class="lbl">Można sprzedać bez PIT</div><div class="val">${pf.active.filter(r => r.free && r.free <= today).length} / ${pf.active.length}</div><div class="note">pół roku od końca miesiąca zakupu</div></div>
+    <div class="card stat"><div class="lbl">Można sprzedać bez PIT</div><div class="val">${pf.active.filter(r => r.free && r.free <= today && !isBulk(r)).length} / ${pf.nMain}</div><div class="note">pół roku od końca miesiąca zakupu</div></div>
   </div>
   ${(() => { const s = sellSummary(pf); if (!s.n && !s.wait) return ''; return `<div class="card" style="margin-top:12px"><h2>Na sprzedaż na Cardmarket</h2><div class="grid g4">
     <div class="stat"><div class="lbl">Wystawione</div><div class="val">${s.n} ${plKart(s.n)}</div><div class="note">${s.wait ? `+ ${s.wait} czeka na wystawienie` : 'ceny aktualizowane codziennie'}</div></div>

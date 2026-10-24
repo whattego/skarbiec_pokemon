@@ -514,8 +514,12 @@ def main():
         cur = pf_price_on(k, day)
         qty = h.get("qty", 1)
         cost = float(h.get("cost_pln") or 0)
-        cost_pln += cost
         grade = h.get("grade") or {}
+        # bulk (trend < track_min_eur, bez slabu): poza wartością i kosztem portfela oraz bez alertów (decyzja użytkownika 24.10.2026)
+        tr = price_of(k)
+        if not grade.get("by") and tmin and tr and tr[0] is not None and tr[0] < tmin:
+            continue
+        cost_pln += cost
         if grade.get("by"):
             # slab: cennik CM nie ma cen kart ocenionych – ręczna wycena ze strony; przypomnienie co GRADE_REMIND_D dni
             age = (today - date.fromisoformat(grade["t"])).days if grade.get("t") else None
