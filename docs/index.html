@@ -2086,23 +2086,47 @@ function mountPicker(d, onPick) {
     if (q.length < 2) { res.innerHTML = '<p class="muted">Wpisz co najmniej 2 znaki.</p>'; return; }
     // numer karty w zapytaniu („darkrai 037/xy-p”, „mew 129/103”, „pikachu 30C023”): cennik CM nie zna numerów,
     // więc numer sprawdzamy w TCGdex (EN i JA), a w cenniku szukamy po samej nazwie
-    const toks = q.split(/\s+/), numTok = toks.find(t => /\d/.test(t) && (/\//.test(t) || /^[a-z]{0,5}\d{1,4}[a-z]?$/i.test(t)));
-    const nameQ = toks.filter(t => t !== numTok).join(' ');
+    // nazwa jak na Cardmarkecie: „Venusaur (s8a-P 002)”, „Pikachu (30C 032)” albo bez nawiasu „venusaur s8a-p 002” → kod setu + numer
+    const cm = q.match(/^(.*?)\s*\(\s*([a-z0-9][a-z0-9.\-]*)\s+([a-z]{0,4}\d{1,4}[a-z]?)\s*\)?\s*$/i)
+      || q.match(/^(?:(.*?)\s+)?([a-z]*\d[a-z0-9.]*[a-z][a-z0-9.\-]*|[a-z][a-z0-9.]*\d[a-z0-9.\-]*|[a-z0-9.]+-[a-z0-9.\-]+)\s+([a-z]{0,4}\d{1,4}[a-z]?)\s*$/i);   // bez nawiasu tylko kod z cyfrą lub myślnikiem („charizard ex 006” to nie kod „ex”)
+    const cmCode = cm && /[a-z]/i.test(cm[2]) && /\d/.test(cm[3]) ? cm[2] : null;
+    const toks = q.split(/\s+/), numTok = cmCode ? `${cm[3]}/${cmCode}` : toks.find(t => /\d/.test(t) && (/\//.test(t) || /^[a-z]{0,5}\d{1,4}[a-z]?$/i.test(t)));
+    const nameQ = cmCode ? (cm[1] || '').trim() : toks.filter(t => t !== numTok).join(' ');
+    const label = cmCode ? `${cmCode} ${cm[3]}` : String(numTok || '').toUpperCase();
     const row = r => `<tr><td class="name"><div class="nm">${esc(baseName(r[1]))}${S.cmnums?.[r[0]] ? ` <span class="muted" style="font-weight:400">${esc(S.cmnums[r[0]].slice(0, 2).join(' '))}</span>` : ''}<small>${esc([S.catalog.exp[r[3]] || `dodatek #${r[3]}`, KIND[S.catalog.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td>${E(r[4])}</td><td><button class="btn sm primary" data-pick="${r[0]}">Wybierz</button>${r[9] ? ` <button class="btn sm" data-pick="${r[0]}" data-holo="1" title="Wersja Reverse Holo">RH</button>` : ''}</td></tr>`;
-    const { rows, total } = searchCatalog(nameQ || q, { kind, sort: 'price', limit: 40 });
-    res.innerHTML = `${numTok && nameQ ? '<div id="pk-num"><p class="muted"><span class="spin"></span> Szukam numeru ' + esc(numTok.toUpperCase()) + '…</p></div>' : ''}
-      <table class="tbl"><tr><th>Produkt${numTok && nameQ ? ' (wszystkie wersje o tej nazwie)' : ''}</th><th>Trend</th><th></th></tr>${rows.map(row).join('') || '<tr><td colspan="3" class="empty">Nic nie znaleziono.</td></tr>'}</table>${total > rows.length ? `<p class="muted" style="font-size:12px">Pokazuję ${rows.length} z ${total} – doprecyzuj wyszukiwanie.</p>` : ''}`;
-    if (numTok && nameQ) {
+    const exactQ = numTok && (nameQ || cmCode);
+    const { rows, total } = nameQ || !cmCode ? searchCatalog(nameQ || q, { kind, sort: 'price', limit: 40 }) : { rows: [], total: 0 };
+    res.innerHTML = `${exactQ ? '<div id="pk-num"><p class="muted"><span class="spin"></span> Szukam ' + esc(label) + '…</p></div>' : ''}
+      ${!nameQ && cmCode ? '' : `<table class="tbl"><tr><th>Produkt${exactQ ? ' (wszystkie wersje o tej nazwie)' : ''}</th><th>Trend</th><th></th></tr>${rows.map(row).join('') || '<tr><td colspan="3" class="empty">Nic nie znaleziono.</td></tr>'}</table>${total > rows.length ? `<p class="muted" style="font-size:12px">Pokazuję ${rows.length} z ${total} – doprecyzuj wyszukiwanie.</p>` : ''}`}`;
+    if (exactQ) {
       const my = ++runId, [no, set = ''] = numTok.split('/');
       const pseudo = { name: nameQ, name_en: nameQ, attacks_en: [], number: no, set_total: /^\d+$/.test(set) ? set : '', set_code: /^\d+$/.test(set) ? '' : set.toUpperCase(), language: JA_SCRIPT.test(nameQ) ? 'ja' : 'en' };
       // 1) numer z tytułów produktów Cardmarketu (pewne, także JP i promo), 2) TCGdex EN
-      const byCm = byNumber(pseudo, searchCatalog(nameQ, { kind: 'S', sort: 'price', limit: 2000 }).rows.map(r => ({ idp: r[0], name: baseName(r[1]), set: S.catalog.exp[r[3]] || `dodatek #${r[3]}`, no: numTok.toUpperCase(), lang: expLang(r[3]) })));
-      resolveIn('en', pseudo, true).then(tcg => {
+      const asCand = r => ({ idp: r[0], name: baseName(r[1]), set: S.catalog.exp[r[3]] || `dodatek #${r[3]}`, no: label, lang: expLang(r[3]) });
+      const pool = nameQ ? searchCatalog(nameQ, { kind: 'S', sort: 'price', limit: 2000 }).rows
+        : Object.keys(S.cmnums || {}).map(id => catRow(+id)).filter(Boolean);   // sam kod + numer: wszystkie karty o znanym numerze z CM
+      const byCm = byNumber(pseudo, pool.map(asCand));
+      // kod setu → dodatek (TCGdex JA, np. M3 → Nihil Zero) i numer → produkt; zwykły TCGdex EN tylko bez kodu z CM
+      const viaCode = async () => {
+        if (!cmCode || byCm.length) return [];
+        for (const k of [cmCode, cmCode.toUpperCase(), cmCode.toLowerCase()]) {
+          if (await jpCodeExp(k) == null) continue;
+          const bn = byCodeNumber({ ...pseudo, set_code: k });
+          const ce = S.codeExp[k], inExp = nameQ ? pool.filter(r => r[3] === ce) : [];
+          const hit = bn && (!nameQ || nameSim(baseName(bn[1]), nameQ) >= 0.4) ? [bn] : inExp.length === 1 ? inExp : [];
+          if (hit.length) return hit.map(asCand);
+        }
+        // kod znany z tytułów innych kart CM (ten sam kod → ten sam dodatek) → wersje o tej nazwie w tym dodatku
+        const cc = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''), exps = new Set();
+        for (const [id, e] of Object.entries(S.cmnums || {})) if (cc(e[0]) === cc(cmCode)) { const r = catRow(+id); if (r) exps.add(r[3]); }
+        return nameQ && exps.size ? pool.filter(r => exps.has(r[3])).slice(0, 6).map(r => ({ ...asCand(r), guess: true, no: S.cmnums?.[r[0]]?.slice(0, 2).join(' ') || `${cmCode} ?` })) : [];
+      };
+      Promise.all([viaCode().catch(() => []), cmCode ? Promise.resolve([]) : resolveIn('en', pseudo, true)]).then(([codeHits, tcg]) => {
         const box = $('#pk-num', d); if (!box || my !== runId) return;
-        const seen = new Set(), exact = [...byCm, ...tcg.filter(x => x.idp).map(x => ({ ...x, lang: 'en' }))].filter(x => !seen.has(x.idp) && seen.add(x.idp));
+        const seen = new Set(), exact = [...byCm, ...codeHits, ...tcg.filter(x => x.idp).map(x => ({ ...x, lang: 'en' }))].filter(x => !seen.has(x.idp) && seen.add(x.idp));
         box.innerHTML = exact.length
-          ? `<h3 style="margin:4px 0 6px">Numer ${esc(numTok.toUpperCase())}</h3><table class="tbl">${exact.map(x => { const r = catRow(x.idp); return `<tr><td class="name"><div class="nm">${esc(x.name)} <span class="muted" style="font-weight:400">${esc(x.no)}${x.total ? '/' + x.total : ''}</span>${x.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}<small>${esc(x.set)}</small></div></td><td>${E(r?.[4])}</td><td><button class="btn sm primary" data-pick="${x.idp}">Wybierz</button></td></tr>`; }).join('')}</table>`
-          : `<p class="muted" style="font-size:12px">Numer ${esc(numTok.toUpperCase())} nie jest jeszcze znany. Wybierz wersję z listy poniżej po nazwie dodatku (np. „XY Promos”, „30th Celebration JP”). Numery uzupełnia rozszerzenie przy sprawdzaniu cen – potem wyszukiwanie po numerze trafia od razu.</p>`;
+          ? `<h3 style="margin:4px 0 6px">${exact.every(x => x.guess) ? `Numer ${esc(label)} nieznany – wersje w dodatku z kodem ${esc(cmCode)}` : `${cmCode ? 'Dokładne trafienie' : 'Numer'} ${esc(label)}`}</h3><table class="tbl">${exact.map(x => { const r = catRow(x.idp); return `<tr><td class="name"><div class="nm">${esc(x.name)} <span class="muted" style="font-weight:400">${esc(x.no)}${x.total ? '/' + x.total : ''}</span>${x.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}<small>${esc(x.set)}</small></div></td><td>${E(r?.[4])}</td><td><button class="btn sm primary" data-pick="${x.idp}">Wybierz</button></td></tr>`; }).join('')}</table>`
+          : `<p class="muted" style="font-size:12px">Numer ${esc(label)} nie jest jeszcze znany. Wybierz wersję z listy poniżej po nazwie dodatku (np. „XY Promos”, „30th Celebration JP”). Numery uzupełnia rozszerzenie przy sprawdzaniu cen – potem wyszukiwanie po numerze trafia od razu.</p>`;
       });
     }
   };
