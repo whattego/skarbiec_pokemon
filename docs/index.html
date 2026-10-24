@@ -609,7 +609,7 @@ function vWatch(v) {
 
 function enNote(rows) {
   const ens = rows.map(r => r.en).filter(e => e?.min != null);
-  if (!ens.length) return `Najtaniej EN/NM: najtańsza oferta po angielsku w stanie NM z wysyłką do Polski. Publiczny cennik Cardmarketu tego nie ma – ceny pobiera skrypt Tampermonkey „Skarbiec – ceny EN/NM” (przycisk „Uaktualnij ceny EN/NM”).${enScript() ? '' : ` <a href="skarbiec_en.user.js" target="_blank" rel="noopener">Zainstaluj skrypt</a>`}`;
+  if (!ens.length) return `Najtaniej EN/NM: najtańsza oferta po angielsku w stanie NM z wysyłką do Polski. Publiczny cennik Cardmarketu tego nie ma – ceny pobiera rozszerzenie Chrome „Skarbiec – Cardmarket” (przycisk „Uaktualnij ceny EN/NM”).${enScript() ? '' : ' Rozszerzenie nie jest zainstalowane w tej przeglądarce.'}`;
   const t = ens.map(e => e.t).sort()[0];
   return `Najtaniej EN/NM: oferty po angielsku, NM, od sprzedawców wysyłających do Polski (cena bez wysyłki) · ${ens.length}/${rows.length} kart · sprawdzone ${agoPL(t)} · „Uaktualnij” otwiera na chwilę kartę Cardmarketu (zamyka się sama); przy zwykłej wizycie na Cardmarkecie ceny odświeżają się same, gdy mają ponad 20 godz. · 🔎 = ponad 15% poniżej trendu.`;
 }
@@ -1306,12 +1306,18 @@ const ACT = {
   },
   enRefresh: async () => {
     if (!enScript()) {
-      modal('Ceny EN/NM – potrzebny skrypt', `<p style="margin-top:0">Ceny ofert EN/NM pobiera z Cardmarketu skrypt Tampermonkey w twojej przeglądarce (twoja sesja Cardmarketu, nic nie trafia na żaden serwer).</p>
-        <ol><li><a href="skarbiec_en.user.js" target="_blank" rel="noopener">Zainstaluj skrypt</a> – Tampermonkey pokaże okno „Zainstaluj”.</li><li>Odśwież tę stronę i kliknij „Uaktualnij ceny EN/NM” jeszcze raz.</li></ol>
+      modal('Ceny EN/NM – potrzebne rozszerzenie', `<p style="margin-top:0">Ceny ofert EN/NM pobiera z Cardmarketu rozszerzenie Chrome „Skarbiec – Cardmarket” w twojej przeglądarce (twoja sesja Cardmarketu, nic nie trafia na żaden serwer).</p>
+        <ol><li>Chrome → <code>chrome://extensions</code> → włącz <b>Tryb dewelopera</b> → <b>Załaduj rozpakowane</b> → wybierz folder <code>pokemon-system/extension</code>.</li><li>Odśwież tę stronę i kliknij „Uaktualnij ceny EN/NM” jeszcze raz.</li></ol>
         <p class="muted" style="font-size:12px">Musisz być zalogowany na Cardmarket w tej przeglądarce.</p>`);
       return;
     }
     if (S.readOnly) return toast('Tryb tylko do odczytu – dodaj token GitHub w Ustawieniach.', 4500);
+    if (document.documentElement.dataset.skarbiecEnExt) {   // rozszerzenie Chrome: samo otworzy Cardmarket w tle i zamknie
+      S.enStatus = { state: 'run', text: 'rozszerzenie otwiera Cardmarket w tle…', t: Date.now() }; render();
+      await syncTargets();
+      document.dispatchEvent(new Event('skarbiec-en-run'));
+      return;
+    }
     // Cloudflare Cardmarketu wpuszcza tylko zapytania z karty cardmarket.com – otwieramy ją (w tym samym kliknięciu, żeby nie zablokowało okienek),
     // skrypt sprawdza ceny, karta zamyka się sama, a postęp przychodzi tutaj (zdarzenie skarbiec-en-status)
     const w = window.open('', '_blank');
