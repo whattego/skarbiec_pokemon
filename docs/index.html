@@ -325,7 +325,7 @@ async function enLiveTick() {
   _enLiveT = Date.now();
   const before = enSig(); await loadEN();
   if (enSig() === before) return;
-  await applyVerify();
+  await applyVerify(); await bulkReconcile().catch(() => {});
   const typing = document.querySelector('dialog[open]') || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
   if (!typing && ['watch', 'portfel', 'pulpit', 'okazje'].includes(S.tab)) { const y = scrollY; render(); scrollTo(0, y); }
 }
@@ -1078,7 +1078,39 @@ const plKart = n => n === 1 ? 'karta' : [2, 3, 4].includes(n % 10) && ![12, 13, 
 // bulk: karty tańsze niż track_min_eur (bot nie trzyma ich historii) – w portfelu jedna zwinięta grupa
 const bulkMin = () => +({ ...DEFAULT_SETTINGS, ...(S.vault?.settings || {}) }).track_min_eur || 0;
 // bulk wg tej samej kwoty, którą widać w portfelu (za sztukę, €): karta do weryfikacji liczy się po minimum z możliwych wersji
-const isBulk = r => { if (!(bulkMin() > 0) || r.graded || r.value == null) return false; return r.value / (r.h.qty || 1) / fxNow() < bulkMin(); };
+// Próg bulk z histerezą (24.10.2026: karta za ~0,50 € raz była w Destined Rivals, raz w bulku – kurs i zaokrąglenia):
+// z bulku do głównych kart przy ≥ 0,50 €, z powrotem do bulku dopiero poniżej 0,45 € (BULK_BACK). Ostatni stan w h.tier
+// (zapisuje bulkReconcile, zmiany → vault.bulk_log = dziennik „do koszulki / do bulku”).
+const BULK_BACK = 0.9;
+const bulkUnit = r => (!(bulkMin() > 0) || r.graded || r.value == null) ? null : r.value / (r.h.qty || 1) / fxNow();
+const isBulk = r => { const u = bulkUnit(r); if (u == null) return false; return u < bulkMin() * (r.h.tier === 'main' ? BULK_BACK : 1); };
+async function bulkReconcile() {
+  if (!S.vault || !S.catalog || S.readOnly) return;
+  const first = !(S.vault.portfolio || []).some(h => h.tier), log = S.vault.bulk_log || [];
+  let n = 0;
+  for (const r of holdingsCalc().active) {
+    if (bulkUnit(r) == null) continue;
+    const tier = isBulk(r) ? 'bulk' : 'main';
+    if (r.h.tier === tier) continue;
+    if (r.h.tier && !first) log.push({ t: Date.now(), uid: r.h.uid, id: r.h.id, name: baseName(itemMeta(r.h).name), set: r.m.set || '', no: r.h.no || '', to: tier, eur: +bulkUnit(r).toFixed(2), qty: r.h.qty || 1 });
+    r.h.tier = tier; n++;
+  }
+  if (!n) return;
+  S.vault.bulk_log = log.slice(-300);
+  await saveVault(first ? 'portfel: stan bulk / główne karty' : `portfel: zmiany bulk (${n})`);
+}
+// dziennik: karty, które przeszły z bulku do głównych (podrożały – do koszulki) albo odwrotnie
+function bulkLogNew() { const seen = S.vault?.bulk_seen || 0; return (S.vault?.bulk_log || []).filter(e => e.t > seen && e.to === 'main').length; }
+function bulkLogModal() {
+  const ev = (S.vault?.bulk_log || []).filter(e => Date.now() - e.t < 60 * 864e5).reverse(), seen = S.vault.bulk_seen || 0;
+  const tm = t => new Date(t).toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  modal(`Zmiany bulk – ostatnie 60 dni (${ev.length})`, `<p class="muted" style="margin-top:0;font-size:13px">⬆ do głównych kart = podrożała do co najmniej ${String(bulkMin()).replace('.', ',')} € (schowaj do koszulki); ⬇ do bulku = spadła poniżej ${String(+(bulkMin() * BULK_BACK).toFixed(2)).replace('.', ',')} €. Nowe od ostatniego otwarcia są wyróżnione.</p>
+    ${ev.length ? `<table class="tbl">${ev.map(e => { const h = S.vault.portfolio.find(x => x.uid === e.uid); return `<tr style="${e.t > seen ? 'font-weight:600' : ''}"><td>${e.to === 'main' ? '<span class="up">⬆ do koszulki</span>' : '<span class="muted">⬇ do bulku</span>'}</td>
+      <td class="name"><div class="nm">${esc(e.name)} <span class="muted" style="font-weight:400">${esc((S.cmnums?.[e.id] || []).slice(0, 2).join(' ') || e.no)}</span>${e.qty > 1 ? ` ×${e.qty}` : ''}<small>${esc(e.set)} · ${tm(e.t)}</small></div></td>
+      <td>${E(e.eur)}</td><td>${h?.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${h.uid}">📷</button>` : ''}</td></tr>`; }).join('')}</table>` : '<div class="empty">Na razie żadna karta nie zmieniła grupy.</div>'}
+    <div class="row" style="margin-top:12px"><button class="btn" data-close>Zamknij</button></div>`);
+  if (!S.readOnly && (S.vault.bulk_log || []).some(e => e.t > seen)) { S.vault.bulk_seen = Date.now(); saveVault('portfel: dziennik bulk przeczytany'); }
+}
 const pfSort = () => ls.get('skarbiec_pf_sort') || 'name';
 const pfCSort = () => ls.get('skarbiec_pf_csort') || 'no';   // pozycje w grupie: numer karty / alfabet / średnia za szt. / najtańsza NM za szt.
 const nmUnit = r => { const e = enOf(r.h)?.min; return e != null && !nmWhy(r) ? e * fxNow() : null; };
@@ -1144,7 +1176,7 @@ function vPortfel(v) {
   <div class="card" style="margin-top:12px"><h2>Wartość w czasie</h2>
     ${(S.market?.pv || []).length >= 2 ? legend([['Wartość', css('--s1')], ['Koszt zakupu', css('--muted'), true]]) + '<div class="chart"><canvas id="c-pf"></canvas></div>' : '<div class="banner">📈 Wykres pojawi się po dwóch dniach pomiarów bota.</div>'}</div>
   <div class="card" style="margin-top:12px"><div class="spread"><h2 style="margin:0">Pozycje</h2>
-    <div class="row"><input type="search" id="pf-q" placeholder="🔎 Szukaj w portfelu (nazwa, numer, dodatek)" value="${esc(S.pfQ || '')}" style="min-width:240px">${!S.readOnly && dupGroups().length ? `<button class="btn sm" data-act="pfmerge" title="Te same karty (ta sama wersja, RH, miesiąc zakupu) jako jedna pozycja z sumą sztuk i kosztów">🔗 Scal duplikaty (${dupGroups().reduce((a, g) => a + g.length - 1, 0)})</button>` : ''}
+    <div class="row"><button class="btn sm${bulkLogNew() ? ' primary' : ''}" data-act="bulklog" title="Karty, które przeszły z bulku do głównych (podrożały) albo odwrotnie">📋 Zmiany bulk${bulkLogNew() ? ` (${bulkLogNew()} do koszulki)` : ''}</button><input type="search" id="pf-q" placeholder="🔎 Szukaj w portfelu (nazwa, numer, dodatek)" value="${esc(S.pfQ || '')}" style="min-width:240px">${!S.readOnly && dupGroups().length ? `<button class="btn sm" data-act="pfmerge" title="Te same karty (ta sama wersja, RH, miesiąc zakupu) jako jedna pozycja z sumą sztuk i kosztów">🔗 Scal duplikaty (${dupGroups().reduce((a, g) => a + g.length - 1, 0)})</button>` : ''}
     <label class="row" style="font-size:13px">Dodatki <select id="pf-sort"><option value="name" ${pfSort() === 'name' ? 'selected' : ''}>alfabetycznie</option><option value="value" ${pfSort() === 'value' ? 'selected' : ''}>wg wartości</option><option value="date" ${pfSort() === 'date' ? 'selected' : ''}>od najnowszych</option><option value="flat" ${pfSort() === 'flat' ? 'selected' : ''}>bez podziału</option></select></label>
     <label class="row" style="font-size:13px">Karty <select id="pf-csort">${[['no', 'wg numeru'], ['name', 'alfabetycznie'], ['avg', 'wg średniej ceny'], ['nm', 'wg najtańszej NM']].map(([v, t]) => `<option value="${v}" ${pfCSort() === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div></div>
     <div class="tblw" style="margin-top:8px"><table class="tbl">
@@ -2475,6 +2507,7 @@ const ACT = {
   addto: a => modal(a.dataset.mode === 'portfel' ? 'Dodaj do portfela' : 'Dodaj do watchlisty', pickerHTML(), d => mountPicker(d, it => { d.close(); a.dataset.mode === 'portfel' ? formHolding(it) : formAddWatch(it); })),
   sell: a => formSell(S.vault.portfolio.find(x => x.uid === a.dataset.uid)),
   pfmerge: () => mergeDupes(),
+  bulklog: () => bulkLogModal(),
   nmmissing: () => nmMissing(),
   edithold: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); formHolding(h, h); },
   rkind: a => { R.kind = a.dataset.k; document.querySelectorAll('[data-act="rkind"]').forEach(c => c.setAttribute('aria-pressed', c === a)); rynekResults(); },
@@ -2493,6 +2526,7 @@ const ACT = {
       profit_steps: $('#s-profit').value.split(/[,; ]+/).map(Number).filter(x => x > 0).sort((a, b) => a - b),
       weekly_summary: day >= 0, summary_weekday: Math.max(0, day), sell_min_pct: Math.max(10, +$('#s-sellmin').value || 90), track_min_eur: Math.max(0, parseFloat($('#s-bulk').value) || 0), cm_fee_pct: Math.max(0, parseFloat($('#s-fee').value) || 0) };
     await saveVault('ustawienia alertów');
+    await bulkReconcile().catch(() => {});   // zmiana progu bulk → od razu nowe grupy i wpisy w dzienniku
   },
   backup: () => { const b = new Blob([JSON.stringify(S.vault, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `skarbiec-kopia-${todayISO()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); },
   logout: () => { ls.set('skarbiec_pw', null); location.reload(); },
@@ -2661,13 +2695,14 @@ async function unlock(pw, remember) {
   S.market ||= { h: {}, fx: {}, pv: [], alerts: [], state: {} };
   shell();
   loadCatalog().then(() => { if (S.tab !== 'rynek') render(); }).catch(() => {});
-  loadEN().then(async () => { await loadCatalog().catch(() => {}); await applyVerify(); await reverifyOnce(); syncVerify(); if (S.en?.size && ['watch', 'portfel'].includes(S.tab)) render(); });
+  loadEN().then(async () => { await loadCatalog().catch(() => {}); await applyVerify(); await reverifyOnce(); syncVerify(); await bulkReconcile().catch(e => console.warn('bulk:', e.message)); if (S.en?.size && ['watch', 'portfel'].includes(S.tab)) render(); });
   enLiveRefresh();
   loadCatalog().catch(() => {}).then(syncTargets);
   // decyzja użytkownika 24.10.2026: próg bulk 0,5 € zamiast 1 € – raz przestaw zapisane ustawienie
   // wycena portfela domyślnie wg średniej 7 dni (decyzja użytkownika 24.10.2026) – zapisane avg30 przestawiane raz
   if (S.vault.settings && S.vault.settings.pf_metric !== 'avg7' && !S.vault.settings.pf7 && !S.readOnly) { S.vault.settings.pf_metric = 'avg7'; S.vault.settings.pf7 = true; saveVault('wycena portfela: średnia 7 dni'); }
-  if (S.vault.settings?.track_min_eur === 1 && !S.vault.settings.bulk05 && !S.readOnly) { S.vault.settings.track_min_eur = 0.5; S.vault.settings.bulk05 = true; saveVault('próg bulk 0,5 €'); }
+  // jednorazowo: stary domyślny próg 1 € → 0,5 €; flaga ustawiana zawsze, żeby później wpisane ręcznie 1 € nie było cofane
+  if (S.vault.settings && !S.vault.settings.bulk05 && !S.readOnly) { if (S.vault.settings.track_min_eur === 1) S.vault.settings.track_min_eur = 0.5; S.vault.settings.bulk05 = true; saveVault('próg bulk 0,5 €'); }
 }
 
 // zakładka w adresie (#watch, #portfel, #watch/<idListy>…): odświeżenie zostawia cię w tym samym miejscu, działa „Wstecz”
