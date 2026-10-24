@@ -468,6 +468,15 @@ async function syncTargets() {
 }
 const CM_EN_AUTO = 'https://www.cardmarket.com/en/Pokemon#skarbiec-en-auto';
 // suma najtańszych cen EN/NM listy w kolejnych pomiarach (ostatni pomiar dnia); tylko pomiary z ceną dla każdej pozycji
+function enPoints(items) {   // suma najtańszych cen EN/NM listy przy każdym sprawdzeniu (ms, €)
+  const out = [];
+  for (const e of S.enHist || []) {
+    let sum = 0, ok = items.length > 0;
+    for (const it of items) { const v = e.p?.[keyOf(it)]; if (v == null) { ok = false; break; } sum += v * (it.qty || 1); }
+    if (ok) out.push([Date.parse(e.t), +sum.toFixed(2)]);
+  }
+  return out.sort((a, b) => a[0] - b[0]);
+}
 function enSeries(items) {
   const byDay = new Map();
   for (const e of S.enHist || []) {
@@ -663,6 +672,38 @@ function lineChart(canvas, labels, sets, { money = 'E', target = null, targetLab
     },
   }));
 }
+// wykres na osi czasu: każdy pomiar w swoim miejscu (komplet co ~15 min, ceny EN/NM, trend raz dziennie)
+// sets: [{label, pts: [[ms, wartość]], color, dots}]; oś x liniowa w ms – bez adaptera dat Chart.js
+function timeChart(canvas, sets, { money = 'E', target = null, from = null } = {}) {
+  if (!window.Chart || !canvas) return;
+  const fmt = money === 'P' ? P : E, muted = css('--muted');
+  const all = sets.flatMap(s => s.pts.map(p => p[0])), lo = from ?? Math.min(...all), hi = Math.max(...all, lo + 36e5);
+  const span = hi - lo, short = span < 3 * 864e5;
+  const fmtT = (ms, full) => new Date(ms).toLocaleString('pl-PL', full || short ? { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'short' });
+  const datasets = sets.filter(s => s.pts.length).map(s => {
+    let pts = s.pts.filter(p => p[0] >= lo);
+    const before = s.pts.filter(p => p[0] < lo).at(-1);
+    if (before) pts = [[lo, before[1]], ...pts];   // linia wchodzi z lewej krawędzi zakresu zamiast zaczynać się w środku
+    if (s.stepped && pts.length) pts = [...pts, [hi, pts.at(-1)[1]]];   // trend dzienny obowiązuje do następnego pomiaru
+    return { label: s.label, data: pts.map(([x, y]) => ({ x, y })), borderColor: s.color, backgroundColor: s.color, borderWidth: 2,
+      pointRadius: s.dots && pts.length <= 300 ? 2 : pts.length <= 2 ? 4 : 0, pointHoverRadius: 5, pointHitRadius: 8, tension: 0, stepped: s.stepped || false, fill: false };
+  });
+  if (target != null) datasets.push({ label: 'Próg', data: [{ x: lo, y: target }, { x: hi, y: target }], borderColor: css('--s4'), borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0, pointHitRadius: 0 });
+  S.charts.push(new Chart(canvas, {
+    type: 'line', data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { title: c => fmtT(c[0].parsed.x, true), label: c => ` ${c.dataset.label}: ${fmt(c.parsed.y)}` } } },
+      scales: {
+        x: { type: 'linear', min: lo, max: hi, grid: { display: false }, border: { color: css('--axis') }, ticks: { color: muted, maxTicksLimit: 6, maxRotation: 0, callback: v => fmtT(v) } },
+        y: { grid: { color: css('--grid') }, border: { display: false }, ticks: { color: muted, maxTicksLimit: 5, callback: v => fmt(v).replace(/,00/, '') } },
+      },
+    },
+  }));
+}
+const WL_RANGES = [['1', '24 godz.'], ['7', '7 dni'], ['30', '30 dni'], ['all', 'wszystko']];
+const wlRange = () => ls.get('skarbiec_wl_range') || '7';
 function legend(items) { return `<div class="legend">${items.map(([l, c, dash]) => `<span><i class="${dash ? 'dash' : ''}" style="background:${c};color:${c}"></i>${esc(l)}</span>`).join('')}</div>`; }
 function spark(vals, w = 84, h = 24) {
   const v = vals.filter(x => x != null); if (v.length < 2) return '<span class="muted">—</span>';
@@ -801,9 +842,14 @@ function vWatch(v) {
   const enNow = items.length && items.every(it => enOf(it)?.min != null) ? items.reduce((a, it) => a + enOf(it).min * (it.qty || 1), 0) : null;
   // komplet z wysyłką: wynik optymalizatora dla Wants Listy o tym samym składzie (te same idProduct)
   const opt = optFor(wl);
-  const optSer = opt ? [...(opt.hist || []).reduce((m, [t, v]) => { const d = new Date(t).toLocaleDateString('sv-SE'); m.set(d, Math.min(m.get(d) ?? Infinity, v)); return m; }, new Map())].sort((a, b) => a[0] < b[0] ? -1 : 1) : [];
-  for (const [d] of optSer) if (!labels.includes(d)) labels.push(d);
-  labels.sort();
+  // każdy pomiar osobno: komplet (rozszerzenie, co ~15 min), same karty EN/NM (każde sprawdzenie), trend (bot, raz dziennie)
+  const optPts = opt ? (opt.hist || []).map(([t, v]) => [Date.parse(t), v]).filter(p => p[0] && p[1] != null).sort((a, b) => a[0] - b[0]) : [];
+  const enPts = enPoints(items), trendPts = ser.map(([d, v]) => [Date.parse(d + 'T04:00:00'), v]);
+  const optSer = optPts;
+  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  const optToday = optPts.filter(p => p[0] >= +dayStart).length, optLast = optPts.at(-1)?.[0];
+  const gaps = optPts.slice(-12).map((p, i, a) => i ? (p[0] - a[i - 1][0]) / 60e3 : null).filter(Boolean);
+  const optEvery = gaps.length ? Math.round(gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)]) : null;
   const buyNow = opt?.total ?? null;
   // lista, dla której rozszerzenie liczy komplet z wysyłką, ma próg „komplet z wysyłką” (bot nie wysyła wtedy fałszywych 🔥 z trendu)
   if (opt && !wl.metric_set && wl.metric !== 'komplet' && !S.readOnly) { wl.metric = 'komplet'; wl.metric_set = true; saveVault('watchlista: próg = komplet EN/NM z wysyłką'); }
@@ -829,7 +875,11 @@ function vWatch(v) {
       <div class="stat"><div class="lbl">Zmiana 7 dni</div><div class="val ${cls(pct(now, back(7)))}">${PC(pct(now, back(7)))}</div><div class="note">30 dni: ${PC(pct(now, back(30)))} · vs śr. 30 dni: ${PC(pct(now, avg30sum))}</div></div>
       <div class="stat"><div class="lbl">Próg okazji</div><div class="val">${wl.target_eur ? E(wl.target_eur) : '—'}</div><div class="note">${wl.target_eur ? (cmpNow > 0 ? (cmpNow <= wl.target_eur ? `<span class="badge good"><span class="dot"></span>${cmpLabel} poniżej progu</span>` : `${cmpLabel}: brakuje ${E(cmpNow - wl.target_eur)}`) + (wl.metric === 'komplet' ? '<br>rozszerzenie: auto-koszyk + Discord' : '<br>bot: alert raz dziennie') : wl.metric === 'komplet' ? 'czeka na pierwsze liczenie rozszerzenia' : 'brak cen') : '<a href="#" data-act="editwl">ustaw próg</a>'}</div></div>
     </div>
-    ${labels.length >= 2 || enSer.length || optSer.length ? legend([...(optSer.length ? [['Komplet EN/NM z wysyłką (najtaniej w dniu)', css('--s2')]] : []), ['Same karty EN/NM', css('--s3')], ['Suma wg trendu', css('--s1')], ...(wl.target_eur ? [['Próg okazji', css('--s4'), true]] : [])]) + '<div class="chart"><canvas id="c-wl"></canvas></div>' : `<div class="banner">📈 Wykres pojawi się po drugim pomiarze bota albo po pierwszym „Uaktualnij ceny EN/NM”.</div>`}
+    ${labels.length >= 2 || enPts.length || optPts.length ? `<div class="spread" style="flex-wrap:wrap;gap:6px">${legend([...(optPts.length ? [['Komplet EN/NM z wysyłką (każde liczenie)', css('--s2')]] : []), ['Same karty EN/NM', css('--s3')], ['Suma wg trendu (raz dziennie)', css('--s1')], ...(wl.target_eur ? [['Próg okazji', css('--s4'), true]] : [])])}
+      <div class="row" role="group" aria-label="Zakres wykresu">${WL_RANGES.map(([k, l]) => `<button class="btn sm${wlRange() === k ? ' primary' : ''}" data-act="wlrange" data-r="${k}" aria-pressed="${wlRange() === k}">${l}</button>`).join('')}</div></div>
+      <div class="chart"><canvas id="c-wl"></canvas></div>
+      ${optPts.length ? `<p class="muted" style="font-size:12px;margin:6px 0 0">Komplet liczony: ostatnio ${new Date(optLast).toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · dziś ${optToday} ${optToday === 1 ? 'liczenie' : [2, 3, 4].includes(optToday % 10) && ![12, 13, 14].includes(optToday % 100) ? 'liczenia' : 'liczeń'}${optEvery ? ` · zwykle co ${optEvery} min` : ''}${Date.now() - optLast > 45 * 60e3 ? ' · <span class="down">od ponad 45 min brak nowego liczenia – czy Chrome z rozszerzeniem jest włączony?</span>' : ''}</p>` : ''}`
+      : `<div class="banner">📈 Wykres pojawi się po drugim pomiarze bota albo po pierwszym „Uaktualnij ceny EN/NM”.</div>`}
   </div>
   <div class="card" style="margin-top:12px"><div class="tblw"><table class="tbl">
     <tr><th>Pozycja</th><th>Trend</th><th>1 dzień</th><th>7 dni</th><th>vs śr. 30 dni</th><th>Najtaniej EN/NM</th><th>Kup poniżej</th><th>60 dni</th><th></th></tr>
@@ -840,11 +890,12 @@ function vWatch(v) {
       <td>${spark(r.sp)}</td><td><button class="btn sm" data-act="edititem" data-k="${esc(keyOf(r.it))}" title="Edytuj">✎</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Pusta lista – dodaj pozycje.</td></tr>'}
   </table></div><p class="muted" style="font-size:12px;margin:8px 0 0">${enNote(rows)}</p></div>`;
   if ($('#c-wl')) {
-    const at = (s, d) => s.find(r => r[0] === d)?.[1] ?? null;
-    lineChart($('#c-wl'), labels, [
-      ...(optSer.length ? [{ label: 'Komplet z wysyłką', data: labels.map(d => at(optSer, d)), color: css('--s2') }] : []),
-      { label: 'Same karty EN/NM', data: labels.map(d => at(enSer, d)), color: css('--s3') },
-      { label: 'Trend', data: labels.map(d => at(ser, d)), color: css('--s1') }], { target: wl.target_eur || null });
+    const r = wlRange(), last = Math.max(...[...optPts, ...enPts, ...trendPts].map(p => p[0]), Date.now());
+    const from = r === 'all' ? null : last - +r * 864e5;
+    timeChart($('#c-wl'), [
+      { label: 'Komplet z wysyłką', pts: optPts, color: css('--s2'), dots: true },
+      { label: 'Same karty EN/NM', pts: enPts, color: css('--s3'), dots: true },
+      { label: 'Trend', pts: trendPts, color: css('--s1'), stepped: true }], { target: wl.target_eur || null, from });
   }
   if (!S.catalog) loadCatalog().then(() => { if (S.tab === 'watch') render(); }).catch(() => {});
 }
@@ -1870,6 +1921,7 @@ const ACT = {
   },
   sellcm: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h) formSellCM(h); },
   gradeval: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.grade) formGradeValue(h); },
+  wlrange: a => { ls.set('skarbiec_wl_range', a.dataset.r); render(); },
   pfgrp: a => { const c = pfClosed(), k = a.dataset.set; c.has(k) ? c.delete(k) : c.add(k); ls.set('skarbiec_pf_closed', JSON.stringify([...c])); render(); },
   holdphotos: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.photos?.length) openPhotos(h.photos, itemMeta(h).name); },
 };
