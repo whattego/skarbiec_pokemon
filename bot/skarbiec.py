@@ -51,6 +51,7 @@ DEFAULT_SETTINGS = {
     "weekly_summary": True,
     "summary_weekday": 0,        # 0 = poniedziałek
     "pf_metric": "avg30",        # wycena portfela: avg30 | avg7 | avg1 | trend (brak średniej → trend)
+    "track_min_eur": 1.0,        # karty z portfela tańsze niż tyle (trend) = bulk: bez dziennej historii i alertów, wartość z dzisiejszego cennika
 }
 GRADE_REMIND_D = 30   # przypomnienie o ręcznej wycenie slabu (PSA/CGC…) co tyle dni
 PF_METRICS = {"avg30": ("średnia 30 dni", 4), "avg7": ("średnia 7 dni", 3), "avg1": ("średnia z 1 dnia", 5), "trend": ("trend", 1)}
@@ -355,9 +356,14 @@ def main():
     for wl in vault.get("watchlists", []):
         for it in wl.get("items", []):
             tracked.add(item_key(it))
+    # portfel: historię dzienną trzymamy tylko dla kart wartych ≥ track_min_eur (przy tysiącach commonów market.enc i repo
+    # rosłyby o dziesiątki MB dziennie); tańsze liczą się do wartości portfela z dzisiejszego cennika (pf_price_on)
+    tmin = float(settings.get("track_min_eur") or 0)
     for h in vault.get("portfolio", []):
         if not h.get("sold"):
-            tracked.add(item_key(h))
+            pr = price_of(item_key(h))
+            if (h.get("grade") or {}).get("by") or not tmin or (pr and pr[0] is not None and pr[0] >= tmin):
+                tracked.add(item_key(h))
     hist = market["h"]
     fresh = set()   # klucze, które dziś dostały nowy pomiar (do alertów dzień-do-dnia)
     for key in tracked:
@@ -381,7 +387,11 @@ def main():
     def pf_price_on(key, d):
         """Cena do wyceny portfela w dniu d: wybrana średnia, a gdy jej brak – trend."""
         idx = PF_METRICS.get(settings.get("pf_metric"), PF_METRICS["avg30"])[1]
-        for row in reversed(hist.get(key, [])):
+        rows = hist.get(key, [])
+        if not rows or rows[-1][0] != d:   # bulk bez historii (albo dziś bez pomiaru) – dzisiejszy cennik
+            pr = price_of(key) if d == day else None
+            rows = [[day] + pr] if pr and pr[0] is not None else rows
+        for row in reversed(rows):
             if row[0] <= d:
                 if row[0] != d:
                     return None
@@ -524,7 +534,8 @@ def main():
             continue
         val = cur * qty * fx
         value_pln += val
-        gain = pct(val, cost) if cost else None
+        # bulk (karta < track_min_eur): bez alertów o zysku – przy kosztach rzędu groszy procenty to szum
+        gain = pct(val, cost) if cost and (grade.get("val") or cur >= float(settings.get("track_min_eur") or 0)) else None
         nm = name_of(h)
         if gain is not None:
             done = st.get(f"pf:{h['uid']}:gain", 0)

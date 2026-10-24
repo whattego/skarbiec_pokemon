@@ -153,7 +153,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
    kluczem z twojego hasła (PBKDF2, 310 000 iteracji). Hasło nigdy nie opuszcza przeglądarki.
    ============================================================ */
 const ITER = 310000;
-const DEFAULT_SETTINGS = { drop_alert_pct: 10, card_drop_alert_pct: 25, dip_alert_pct: 20, profit_steps: [50, 100, 200, 400], weekly_summary: true, summary_weekday: 0, pf_metric: 'avg30' };
+const DEFAULT_SETTINGS = { drop_alert_pct: 10, card_drop_alert_pct: 25, dip_alert_pct: 20, profit_steps: [50, 100, 200, 400], weekly_summary: true, summary_weekday: 0, pf_metric: 'avg30', sell_min_pct: 90, track_min_eur: 1 };
 const KIND = { S: 'Karta', D: 'Display / box', E: 'ETB', B: 'Booster', O: 'Inny sealed' };
 const S = { pw: null, vault: null, vaultSha: null, vaultSalt: null, market: null, meta: null, catalog: null, catMap: null, tab: 'pulpit', wl: null, charts: [], readOnly: true, branch: null };
 
@@ -297,7 +297,10 @@ async function loadEN() {
     // cmnums.json: kod i numer karty z tytułu produktu na Cardmarket (zbiera rozszerzenie) – do dopasowania kart JP/promo
     if (all.some(f => f.name === 'cmnums.json'))
       S.cmnums = (await GH.call('/contents/en/cmnums.json', { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null))?.p || {};
-    const files = all.filter(f => f.name.endsWith('.json') && !['targets.json', 'history.json', 'cmnums.json', 'verify.json'].includes(f.name) && !/^opt_/.test(f.name));
+    // listed.json: wynik wystawiania na Cardmarket (pisze rozszerzenie) {items: {uid: {t, ok, price, qty, err, msg}}}
+    S.listed = all.some(f => f.name === 'listed.json')
+      ? (await GH.call('/contents/en/listed.json', { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null))?.items || {} : {};
+    const files = all.filter(f => f.name.endsWith('.json') && !['targets.json', 'history.json', 'cmnums.json', 'verify.json', 'sell.json', 'listed.json', 'request.json'].includes(f.name) && !/^opt_/.test(f.name));
     const docs = await Promise.all(files.map(f => GH.call(`/contents/en/${encodeURIComponent(f.name)}`, { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null)));
     const m = new Map();
     for (const d of docs.filter(Boolean)) for (const [k, v] of Object.entries(d.items || {})) {
@@ -309,7 +312,7 @@ async function loadEN() {
 }
 // Otwarta strona sama dociąga nowe wyniki rozszerzenia (komplet co ~15 min, ceny EN/NM): co 3 min, gdy karta jest widoczna,
 // i od razu po powrocie do karty. Przerysowanie tylko, gdy coś się zmieniło i nie wpisujesz akurat niczego.
-const enSig = () => JSON.stringify([(S.opt || []).map(o => o.t), (S.enHist || []).length, Math.max(0, ...[...(S.en?.values() || [])].map(v => Date.parse(v.t) || 0)), Object.keys(S.cmnums || {}).length]);
+const enSig = () => JSON.stringify([JSON.stringify(S.listed || {}).length, (S.opt || []).map(o => o.t), (S.enHist || []).length, Math.max(0, ...[...(S.en?.values() || [])].map(v => Date.parse(v.t) || 0)), Object.keys(S.cmnums || {}).length]);
 let _enLiveT = 0, _enLiveOn = false;
 async function enLiveTick() {
   if (document.visibilityState !== 'visible' || !S.vault || Date.now() - _enLiveT < 60e3) return;
@@ -372,8 +375,65 @@ async function requestDesktop(what) {
   } catch (e) { console.warn('zlecenie:', e.message); return false; }
 }
 
+// ---------- Sprzedaż na Cardmarket ----------
+// Pozycja portfela z h.sell.on = „na sprzedaż”: rozszerzenie przy najbliższym przebiegu (raz na dobę albo zaraz po zaznaczeniu)
+// wystawia ją samo (decyzja użytkownika: w pełni automatycznie). Cena: najtańsza oferta w tym języku i stanie od sprzedawcy
+// z ≥ 10 sprzedażami z UE minus 0,01 €, ale nie mniej niż sell_min_pct % trendu; h.sell.price = cena ręczna.
+// Wynik wraca w en/listed.json (S.listed). Slabów nie wystawiamy (formularz CM nie ma pola oceny).
+const CONDS = [[1, 'Mint'], [2, 'Near Mint'], [3, 'Excellent'], [4, 'Good'], [5, 'Light Played'], [6, 'Played'], [7, 'Poor']];
+const CM_LANG = { en: 1, ja: 7 };
+const sellState = h => { const l = S.listed?.[h.uid]; return !h.sell?.on ? null : l?.ok ? 'listed' : l?.err ? 'err' : 'wait'; };
+async function syncSell() {
+  if (S.readOnly || !GH.token || !PHOTOS.repo) return;
+  const st = { ...DEFAULT_SETTINGS, ...(S.vault.settings || {}) };
+  const items = (S.vault.portfolio || []).filter(h => h.sell?.on && !h.sold && !h.grade?.by && !S.listed?.[h.uid]?.ok).map(h => {
+    const r = catRow(h.id);
+    return { uid: h.uid, id: +h.id, holo: !!h.holo, qty: h.qty || 1, lang: CM_LANG[h.lang || 'en'] || 1, cond: +h.sell.cond || 2,
+      trend: r ? (h.holo ? r[9] || r[4] : r[4]) : null, price: +h.sell.price > 0 ? +h.sell.price : null, comment: h.sell.comment || '',
+      crop: h.crop || null, name: itemMeta(h).name, retry: h.sell.retry || 0 };
+  });
+  const json = JSON.stringify({ v: 1, min_pct: +st.sell_min_pct || 90, items });
+  if (json === S._sell || (!items.length && !S._sell)) return;
+  try {
+    await PHOTOS.enqueue(async () => {
+      let sha; try { sha = (await GH.call('/contents/en/sell.json', {}, PHOTOS.repo)).sha; } catch (e) { if (!/ 404/.test(e.message)) throw e; }
+      if (!PHOTOS.branch) PHOTOS.branch = (await GH.call('', {}, PHOTOS.repo)).default_branch || 'main';
+      await GH.call('/contents/en/sell.json', { method: 'PUT', body: JSON.stringify({ message: `karty do wystawienia na Cardmarket (${items.length})`, content: b64e(new TextEncoder().encode(json)), branch: PHOTOS.branch, ...(sha ? { sha } : {}) }) }, PHOTOS.repo);
+    });
+    S._sell = json;
+  } catch (e) { console.warn('sprzedaż:', e.message); }
+}
+function formSellCM(h) {
+  const m = itemMeta(h), p = nowPrice(h), st = { ...DEFAULT_SETTINGS, ...(S.vault.settings || {}) }, l = S.listed?.[h.uid];
+  if (h.grade?.by) return toast('Slabów nie wystawiam automatycznie – formularz Cardmarketu nie ma pola oceny. Wystaw go ręcznie.', 6000);
+  modal('Sprzedaż na Cardmarket', `<p style="margin-top:0"><b>${esc(m.name)}</b> · ${esc(m.set || '')} · ${h.qty || 1} szt. · ${h.lang === 'ja' ? 'japońska' : 'angielska'}${p?.trend ? `<br><span class="muted">trend ${E(p.trend)}</span>` : ''}</p>
+    ${l?.ok ? `<div class="banner" style="margin-bottom:10px">✓ Wystawiona ${dPL(l.t.slice(0, 10))} za ${E(l.price)} / szt.</div>` : l?.err ? `<div class="banner" style="margin-bottom:10px">⚠️ Ostatnia próba: ${esc(l.err)}${l.posted ? '<br><b>Formularz trafił do Cardmarketu</b> – sprawdź w „Moje oferty” na Cardmarket, czy karta nie jest już wystawiona, zanim klikniesz „Spróbuj ponownie”.' : ''}</div>` : ''}
+    <p class="muted" style="font-size:13px">Rozszerzenie wystawi kartę samo przy najbliższym przebiegu (zaraz, jeśli Chrome z rozszerzeniem jest włączony): cena o 1 grosz niższa od najtańszej oferty w tym języku i stanie od sprzedawcy z ≥ 10 sprzedażami z UE, ale nie mniej niż ${+st.sell_min_pct || 90}% trendu. Do oferty dołączy wycinek karty z Twojego skanu, jeśli jest.</p>
+    <div class="grid g2" style="gap:10px">
+      <label class="f">Stan<select id="c-cond">${CONDS.map(([v, n]) => `<option value="${v}" ${(+h.sell?.cond || 2) === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+      <label class="f">Cena ręczna / szt. (€, puste = automatycznie)<input type="number" id="c-price" step="0.01" min="0.02" value="${h.sell?.price || ''}"></label>
+      <label class="f" style="grid-column:1/-1">Komentarz w ofercie (opcjonalnie)<input type="text" id="c-com" maxlength="120" value="${esc(h.sell?.comment || '')}"></label>
+    </div>
+    <div class="spread" style="margin-top:14px"><div class="row"><button class="btn primary" id="c-ok">${l?.err ? 'Spróbuj ponownie' : h.sell?.on ? 'Zapisz' : 'Wystaw na sprzedaż'}</button><button class="btn" data-close>Anuluj</button></div>
+      ${h.sell?.on && !l?.ok ? '<button class="btn danger" id="c-off">Nie wystawiaj</button>' : ''}</div>`, d => {
+    $('#c-ok', d).onclick = async () => {
+      const pr = parseFloat($('#c-price', d).value);
+      h.sell = { on: true, cond: +$('#c-cond', d).value, price: pr > 0 ? +pr.toFixed(2) : null, comment: $('#c-com', d).value.trim(), ...(l?.err ? { retry: Date.now() } : {}) };
+      d.close();
+      if (await saveVault(`na sprzedaż: ${m.name}`)) { await syncSell(); sellKick(); }
+      render();
+    };
+    const off = $('#c-off', d); if (off) off.onclick = async () => { delete h.sell; d.close(); if (await saveVault(`nie wystawiaj: ${m.name}`)) await syncSell(); render(); };
+  });
+}
+function sellKick() {   // od razu poproś rozszerzenie o przebieg (na komputerze) albo zleć go komputerowi (telefon)
+  if (document.documentElement.dataset.skarbiecEnExt) document.dispatchEvent(new Event('skarbiec-en-run'));
+  else requestDesktop('en').then(ok => ok && toast('Zlecone komputerowi – karta zostanie wystawiona w ciągu ok. 5 min (Chrome z rozszerzeniem musi być włączony).', 5000));
+}
+
 async function syncTargets() {
   if (S.readOnly || !GH.token || !PHOTOS.repo) return;
+  await syncSell();
   const seen = new Map();
   for (const it of [...(S.vault.watchlists || []).flatMap(w => w.items || []), ...(S.vault.portfolio || []).filter(h => !h.sold)])
     if (+it.id > 0 && !seen.has(keyOf(it))) seen.set(keyOf(it), { id: +it.id, holo: !!it.holo, name: itemMeta(it).name });
@@ -839,14 +899,18 @@ async function dropPhotos(paths, why) {   // usuń pliki, na które nic już nie
 // ---------- Portfel ----------
 // pozycje pogrupowane po dodatkach (jak w segregatorze): w grupie po numerze karty, grupy zwijane (localStorage)
 const plKart = n => n === 1 ? 'karta' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'karty' : 'kart';
+// bulk: karty tańsze niż track_min_eur (bot nie trzyma ich historii) – w portfelu jedna zwinięta grupa
+const bulkMin = () => +({ ...DEFAULT_SETTINGS, ...(S.vault?.settings || {}) }).track_min_eur || 0;
+const isBulk = r => bulkMin() > 0 && !r.graded && r.p?.trend != null && r.p.trend < bulkMin();
 const pfSort = () => ls.get('skarbiec_pf_sort') || 'name';
 const pfClosed = () => { try { return new Set(JSON.parse(ls.get('skarbiec_pf_closed') || '[]')); } catch { return new Set(); } };
 const cardNoKey = r => (S.cmnums?.[r.h.id]?.[1] || String(r.h.no || '').split('/')[0] || '').toUpperCase();   // „030”, „TG23”
 function pfGroups(rows) {
   const closed = pfClosed(), map = new Map();
+  const BULK = `Bulk – karty poniżej ${String(bulkMin()).replace('.', ',')} €`;
   for (const r of rows) {
-    const set = r.m.set || KIND[r.m.kind] || 'Bez dodatku';
-    if (!map.has(set)) map.set(set, { set, rows: [], value: 0, cost: 0, n: 0, last: '' });
+    const set = isBulk(r) ? BULK : r.m.set || KIND[r.m.kind] || 'Bez dodatku';
+    if (!map.has(set)) map.set(set, { set, bulk: set === BULK, rows: [], value: 0, cost: 0, n: 0, last: '' });
     const g = map.get(set);
     g.rows.push(r); g.value += r.value || 0; g.cost += r.cost; g.n += r.h.qty || 1;
     if ((r.h.date || '') > g.last) g.last = r.h.date || '';
@@ -854,13 +918,13 @@ function pfGroups(rows) {
   const coll = new Intl.Collator('pl', { numeric: true, sensitivity: 'base' });
   const gs = [...map.values()];
   for (const g of gs) {
-    g.open = !closed.has(g.set);
+    g.open = g.bulk ? closed.has('+bulk') : !closed.has(g.set);   // bulk domyślnie zwinięty
     g.lang = g.rows.every(r => r.h.lang === 'ja') ? 'JP' : '';
     g.rows.sort((a, b) => coll.compare(cardNoKey(a), cardNoKey(b)) || coll.compare(a.m.name, b.m.name));
   }
   const s = pfSort();
   return gs.sort((a, b) => s === 'value' ? b.value - a.value : s === 'date' ? b.last.localeCompare(a.last) || coll.compare(a.set, b.set)
-    : (a.set === 'Bez dodatku') - (b.set === 'Bez dodatku') || coll.compare(a.set, b.set));
+    : a.bulk - b.bulk || (a.set === 'Bez dodatku') - (b.set === 'Bez dodatku') || coll.compare(a.set, b.set));
 }
 function vPortfel(v) {
   const pf = holdingsCalc(), today = todayISO();
@@ -884,15 +948,15 @@ function vPortfel(v) {
     <label class="row" style="font-size:13px">Dodatki <select id="pf-sort"><option value="name" ${pfSort() === 'name' ? 'selected' : ''}>alfabetycznie</option><option value="value" ${pfSort() === 'value' ? 'selected' : ''}>wg wartości</option><option value="date" ${pfSort() === 'date' ? 'selected' : ''}>od najnowszych</option></select></label></div>
     <div class="tblw" style="margin-top:8px"><table class="tbl">
     <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Najtaniej EN/NM / szt.</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
-    ${pfGroups(pf.active).map(g => `<tr class="grp click" data-act="pfgrp" data-set="${esc(g.set)}"><td colspan="9"><span class="muted">${g.open ? '▾' : '▸'}</span> <b>${esc(g.set)}</b>${g.lang ? ' <span class="badge">JP</span>' : ''}
+    ${pfGroups(pf.active).map(g => `<tr class="grp click" data-act="pfgrp" data-set="${esc(g.bulk ? '+bulk' : g.set)}"><td colspan="9"><span class="muted">${g.open ? '▾' : '▸'}</span> <b>${esc(g.set)}</b>${g.lang ? ' <span class="badge">JP</span>' : ''}
       <span class="muted">· ${g.n} ${plKart(g.n)} · </span>${P(g.value)}${g.cost ? ` <span class="${cls(pct(g.value, g.cost))}">${PC(pct(g.value, g.cost))}</span>` : ''}</td></tr>` + (g.open ? g.rows.map(r => `<tr>
-      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${r.h.no && !S.cmnums?.[r.h.id] ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}${r.h.grade?.by ? ` <span class="badge good" title="${esc(r.h.grade.cert ? 'certyfikat ' + r.h.grade.cert : 'karta oceniona')}">${esc(gradeLbl(r.h))}</span>` : ''}${r.h.verify ? ' <span class="badge warn" title="Wersję (dodatek) poprawi rozszerzenie po sprawdzeniu numeru na Cardmarkecie"><span class="dot"></span>do weryfikacji</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set ? '' : KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
+      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${r.h.no && !S.cmnums?.[r.h.id] ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}${r.h.grade?.by ? ` <span class="badge good" title="${esc(r.h.grade.cert ? 'certyfikat ' + r.h.grade.cert : 'karta oceniona')}">${esc(gradeLbl(r.h))}</span>` : ''}${{ listed: ` <span class="badge good" title="Wystawiona na Cardmarket ${esc(S.listed?.[r.h.uid]?.t?.slice(0, 10) || '')}">CM ${E(S.listed?.[r.h.uid]?.price)}</span>`, wait: ' <span class="badge" title="Rozszerzenie wystawi ją przy najbliższym przebiegu">na sprzedaż – czeka</span>', err: ` <span class="badge warn" title="${esc(S.listed?.[r.h.uid]?.err || '')}"><span class="dot"></span>wystawienie nie wyszło</span>` }[sellState(r.h)] || ''}${r.h.verify ? ' <span class="badge warn" title="Wersję (dodatek) poprawi rozszerzenie po sprawdzeniu numeru na Cardmarkecie"><span class="dot"></span>do weryfikacji</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set ? '' : KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
       <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.h.grade?.by ? `<br><small class="${gradeDue(r.h) ? 'down' : 'muted'}">${r.graded ? `wycena ręczna ${dPL(r.h.grade.t)}${gradeDue(r.h) ? ' · do aktualizacji' : ''}` : 'wpisz wycenę slabu'}</small>${r.graded && r.raw != null ? `<br><small class="muted" title="Cena karty bez gradingu (${PF_METRICS[pfMetric()][0]})">bez gradingu ${P(r.raw)}</small>` : ''}` : r.fb ? '<br><small class="muted" title="Cardmarket nie podaje dla tej pozycji wybranej średniej">wg trendu</small>' : r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
       <td>${enOf(r.h)?.min != null ? `${E(enOf(r.h).min)}<br><small class="muted">≈ ${P(enOf(r.h).min * fxNow())}</small>` : '<span class="muted">—</span>'}</td>
       <td class="${cls(r.plp)}">${r.pl != null ? `${r.pl >= 0 ? '+' : '−'}${P(Math.abs(r.pl))}<br><small>${PC(r.plp)}</small>` : '—'}</td>
       <td class="${cls(r.d7)}">${PC(r.d7)}</td>
       <td>${r.free ? (r.free <= today ? '<span class="badge good"><span class="dot"></span>już teraz</span>' : `<span class="badge warn"><span class="dot"></span>${dPL(r.free)}</span>`) : '—'}</td>
-      <td><div class="row" style="justify-content:flex-end;flex-wrap:nowrap">${r.h.grade?.by ? `<button class="btn sm${gradeDue(r.h) ? ' primary' : ''}" data-act="gradeval" data-uid="${r.h.uid}" title="Wpisz aktualną wartość slabu">Wyceń</button>` : ''}<button class="btn sm" data-act="sell" data-uid="${r.h.uid}">Sprzedaj</button><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}" title="Edytuj">✎</button></div></td></tr>`).join('') : '')).join('') || '<tr><td colspan="9" class="empty">Portfel jest pusty. Dodaj karty i sealed, które już masz – z ceną i datą zakupu.</td></tr>'}
+      <td><div class="row" style="justify-content:flex-end;flex-wrap:nowrap">${r.h.grade?.by ? `<button class="btn sm${gradeDue(r.h) ? ' primary' : ''}" data-act="gradeval" data-uid="${r.h.uid}" title="Wpisz aktualną wartość slabu">Wyceń</button>` : ''}${r.h.grade?.by ? '' : `<button class="btn sm" data-act="sellcm" data-uid="${r.h.uid}" title="Wystaw na Cardmarket">CM</button>`}<button class="btn sm" data-act="sell" data-uid="${r.h.uid}">Sprzedaj</button><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}" title="Edytuj">✎</button></div></td></tr>`).join('') : '')).join('') || '<tr><td colspan="9" class="empty">Portfel jest pusty. Dodaj karty i sealed, które już masz – z ceną i datą zakupu.</td></tr>'}
   </table></div></div>
   ${pf.sold.length ? `<div class="card" style="margin-top:12px"><h2>Sprzedane</h2><div class="tblw"><table class="tbl"><tr><th>Pozycja</th><th>Koszt</th><th>Sprzedaż</th><th>Zysk</th><th>Data</th><th></th></tr>
     ${pf.sold.map(r => { const g = (+r.h.sold.price_pln || 0) - r.cost; return `<tr><td class="name"><div class="nm">${esc(r.m.name)}<small>${r.h.qty || 1} szt.</small></div></td><td>${P(r.cost)}</td><td>${P(+r.h.sold.price_pln)}</td><td class="${cls(g)}">${g >= 0 ? '+' : '−'}${P(Math.abs(g))}</td><td>${dPL(r.h.sold.date)}${r.free && r.h.sold.date < r.free ? '<br><small class="down">przed upływem 6 mies.</small>' : ''}</td><td><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}">✎</button></td></tr>`; }).join('')}</table></div>
@@ -1146,7 +1210,10 @@ async function scanJob(j) {
     liveDupScan();
   } catch (e) { j.status = 'błąd'; j.err = aiError(e); }
   scQueue();
-  if (j.status === 'gotowe') savePhoto(j);
+  // tryb ciągły (1 karta = 1 zdjęcie): przy bulku zapisujemy tylko wycinek (~60 KB) zamiast pełnego zdjęcia (~400 KB) – inaczej
+  // tysiące commonów zapchałyby repo zdjęć; pełne zdjęcie zawsze można dopisać przyciskiem „Zapisz zdjęcie”
+  if (j.status === 'gotowe' && j.live && j.cards.length && j.cards.every(c => c.crop && (scPrice(c.cands[c.sel], c.holo) ?? 0) < bulkMin())) { j.cropOnly = true; scQueue(); }
+  else if (j.status === 'gotowe') savePhoto(j);
 }
 // Tryb ciągły: ta sama karta na dwóch kolejnych zdjęciach w ciągu 30 s to prawie na pewno podwójne zdjęcie –
 // późniejsze odznaczamy i oznaczamy „możliwy duplikat” (nie usuwamy – może to druga sztuka). Zdjęcia analizują się
@@ -1331,7 +1398,7 @@ function scQueue() {
   ${SC.jobs.map(j => `<div class="job"><img src="${j.url}" alt="">
     <div style="min-width:0">
       <div class="spread"><div style="font-size:13px">${STAT[j.status] || (j.status === 'błąd' ? `<span class="down">${esc(j.err)}</span>` : `${j.cards.length ? `${j.cards.length} kart` : 'Nie znalazłem kart na zdjęciu.'}${j.cost ? ` · ${(j.cost * 100).toFixed(3).replace('.', ',')} ¢` : ''}`)}
-        ${j.photo ? ' · <span class="up">📁 zapisane</span>' : j.photoErr ? ` · <span class="down">${esc(j.photoErr)}</span>` : ''}${j.dup ? ' · <span class="badge warn"><span class="dot"></span>możliwy duplikat poprzedniego zdjęcia – odznaczone</span>' : ''}</div>
+        ${j.photo ? ' · <span class="up">📁 zapisane</span>' : j.cropOnly ? ' · <span class="muted" title="Bulk – zapiszę tylko wycinek karty po dodaniu do portfela">✂️ tylko wycinek</span>' : j.photoErr ? ` · <span class="down">${esc(j.photoErr)}</span>` : ''}${j.dup ? ' · <span class="badge warn"><span class="dot"></span>możliwy duplikat poprzedniego zdjęcia – odznaczone</span>' : ''}</div>
         <div class="row">${j.status === 'błąd' ? `<button class="btn sm" data-act="scRetry" data-j="${j.id}">Ponów</button>` : ''}${j.status === 'gotowe' && !j.photo && !S.readOnly ? `<button class="btn sm" data-act="scPhoto" data-j="${j.id}">Zapisz zdjęcie</button>` : ''}<button class="btn sm" data-act="scDrop" data-j="${j.id}" title="Usuń z kolejki">×</button></div></div>
       ${j.cards.map((c, i) => { const k = c.cands[c.sel], pr = scPrice(k, c.holo); return `<div class="sc-card">
         <input type="checkbox" data-j="${j.id}" data-c="${i}" data-f="on" ${c.on ? 'checked' : ''} ${k ? '' : 'disabled'} aria-label="Dodaj">
@@ -1359,9 +1426,9 @@ async function scGallery() {
 }
 async function scApprove() {
   const sel = scSelected(); if (!sel.length) return;
-  for (const j of new Set(sel.map(x => x.j))) if (!j.photo) await savePhoto(j);
+  for (const j of new Set(sel.map(x => x.j))) if (!j.photo && !j.cropOnly) await savePhoto(j);
   // karty bez obrazka z TCGdex: zapisz wycinek z twojego zdjęcia (podgląd w portfelu, dopóki nie ma zdjęcia z Cardmarketu)
-  for (const { c, card } of sel) if (!card.img && c.crop && !c.cropPath && !S.readOnly) {
+  for (const { j, c, card } of sel) if ((!card.img || j.cropOnly) && c.crop && !c.cropPath && !S.readOnly) {
     const path = `crop/${todayISO().slice(0, 7)}/${uid()}.jpg`;
     try { await PHOTOS.put(path, c.crop, `wycinek: ${card.name}`); c.cropPath = path; PHOTOS.urls.set(path, Promise.resolve(c.cropUrl)); } catch (e) { console.warn('wycinek:', e.message); }
   }
@@ -1427,6 +1494,8 @@ function vUstawienia(v) {
       <label class="f">Pozycja spadła w 1 dzień co najmniej (%)<input type="number" id="s-card" value="${st.card_drop_alert_pct}" min="1"></label>
       <label class="f">Pozycja poniżej szczytu z 90 dni o (%)<input type="number" id="s-dip" value="${st.dip_alert_pct}" min="1"></label>
       <label class="f">Zysk w portfelu – progi (%)<input type="text" id="s-profit" value="${esc(st.profit_steps.join(', '))}"></label>
+      <label class="f">Bulk: karty portfela tańsze niż (€) – bez historii, alertów i pełnych zdjęć<input type="number" id="s-bulk" value="${st.track_min_eur ?? 1}" min="0" step="0.1"></label>
+      <label class="f">Wystawiając na Cardmarket, nie schodź poniżej (% trendu)<input type="number" id="s-sellmin" value="${st.sell_min_pct ?? 90}" min="10" max="300"></label>
       <label class="f">Podsumowanie tygodnia<select id="s-sumday">${['poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota', 'niedziela'].map((d, i) => `<option value="${i}" ${+st.summary_weekday === i && st.weekly_summary ? 'selected' : ''}>${d}</option>`).join('')}<option value="-1" ${!st.weekly_summary ? 'selected' : ''}>wyłączone</option></select></label>
     </div>
     <div><button class="btn primary" data-act="savesettings">Zapisz</button></div>
@@ -1705,7 +1774,7 @@ const ACT = {
     S.vault.settings = { ...DEFAULT_SETTINGS, ...(S.vault.settings || {}),
       drop_alert_pct: +$('#s-drop').value || 10, card_drop_alert_pct: +$('#s-card').value || 25, dip_alert_pct: +$('#s-dip').value || 20,
       profit_steps: $('#s-profit').value.split(/[,; ]+/).map(Number).filter(x => x > 0).sort((a, b) => a - b),
-      weekly_summary: day >= 0, summary_weekday: Math.max(0, day) };
+      weekly_summary: day >= 0, summary_weekday: Math.max(0, day), sell_min_pct: Math.max(10, +$('#s-sellmin').value || 90), track_min_eur: Math.max(0, parseFloat($('#s-bulk').value) || 0) };
     await saveVault('ustawienia alertów');
   },
   backup: () => { const b = new Blob([JSON.stringify(S.vault, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `skarbiec-kopia-${todayISO()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); },
@@ -1777,6 +1846,7 @@ const ACT = {
       out.innerHTML = `<span class="up">✓ usunięto ${n} ${plZdj(n)}</span>`;
     } catch (e) { out.innerHTML = `<span class="down">${esc(e.message)}</span>`; }
   },
+  sellcm: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h) formSellCM(h); },
   gradeval: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.grade) formGradeValue(h); },
   pfgrp: a => { const c = pfClosed(), k = a.dataset.set; c.has(k) ? c.delete(k) : c.add(k); ls.set('skarbiec_pf_closed', JSON.stringify([...c])); render(); },
   holdphotos: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.photos?.length) openPhotos(h.photos, itemMeta(h).name); },
