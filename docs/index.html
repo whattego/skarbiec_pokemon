@@ -2257,7 +2257,7 @@ function formHolding(base, existing) {
       <label class="f">Data zakupu<input type="date" id="h-d" value="${existing?.date || todayISO()}" max="${todayISO()}"></label>
       <label class="f">Łączny koszt zakupu (z wysyłką)<input type="number" id="h-c" step="0.01" min="0" value="${curCost}"></label>
       <label class="f">Waluta<select id="h-cur"><option value="PLN">PLN</option><option value="EUR">EUR (przeliczę po kursie ${fxNow().toFixed(4).replace('.', ',')})</option></select></label>
-      ${existing?.verify ? `<label class="f" style="grid-column:1/-1">Wersja karty (do weryfikacji – wybierz właściwą, jeśli wiesz)<select id="h-ver">${[existing.id, ...(existing.verify.cands || [])].filter((v, i, a) => a.indexOf(v) === i).map(id => { const r = catRow(id), cn = S.cmnums?.[id]; return `<option value="${id}" ${id === existing.id ? 'selected' : ''}>${esc(`${r ? baseName(r[1]) : '#' + id} · ${r ? S.catalog.exp[r[3]] || '' : ''}${cn ? ' · ' + cn.slice(0, 2).join(' ') : ''} · ${r?.[4] != null ? E(r[4]) : '—'}${id === existing.id ? ' (obecnie)' : ''}`)}</option>`; }).join('')}</select></label>` : ''}
+      ${existing?.verify ? `<label class="f" style="grid-column:1/-1">Wersja karty (do weryfikacji – „Zapisz” potwierdza wybraną wersję)<select id="h-ver">${[existing.id, ...(existing.verify.cands || [])].filter((v, i, a) => a.indexOf(v) === i).map(id => { const r = catRow(id), cn = S.cmnums?.[id]; return `<option value="${id}" ${id === existing.id ? 'selected' : ''}>${esc(`${r ? baseName(r[1]) : '#' + id} · ${r ? S.catalog.exp[r[3]] || '' : ''}${cn ? ' · ' + cn.slice(0, 2).join(' ') : ''} · ${r?.[4] != null ? E(r[4]) : '—'}${id === existing.id ? ' (obecnie)' : ''}`)}</option>`; }).join('')}</select></label>` : ''}
       <label class="f" style="grid-column:1/-1">Notatka (np. gdzie kupione, stan)<input type="text" id="h-n" value="${esc(existing?.note || '')}"></label>
       ${S.readOnly ? '' : `<label class="f" style="grid-column:1/-1">Dodaj własne zdjęcia karty${existing?.photos?.length ? ` (masz już ${existing.photos.length})` : ''}<input type="file" id="h-ph" accept="image/*" multiple></label>`}
       <label class="f">Grading<select id="h-gby"><option value="">brak – karta bez oceny</option>${[...new Set([...GRADERS, existing?.grade?.by].filter(Boolean))].map(g => `<option ${existing?.grade?.by === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></label>
@@ -2275,9 +2275,9 @@ function formHolding(base, existing) {
       const alt = $('#h-alt', d);
       if (alt && +alt.value !== rec.id) { const r = catRow(+alt.value); Object.assign(rec, { id: +alt.value, name: r ? r[1] : rec.name, set: (r && S.catalog.exp[r[3]]) || rec.set }); }
       const ver = $('#h-ver', d);
-      if (ver && +ver.value !== rec.id) {   // wybrana ręcznie wersja = zweryfikowana
-        const r = catRow(+ver.value);
-        Object.assign(rec, { id: +ver.value, name: r ? r[1] : rec.name, set: (r && S.catalog.exp[r[3]]) || rec.set }); delete rec.verify;
+      if (ver) {   // zapis z wybraną wersją (także obecną) = zweryfikowana ręcznie – znika z banera „do weryfikacji”
+        if (+ver.value !== rec.id) { const r = catRow(+ver.value); Object.assign(rec, { id: +ver.value, name: r ? r[1] : rec.name, set: (r && S.catalog.exp[r[3]]) || rec.set }); }
+        delete rec.verify;
       }
       const gby = $('#h-gby', d).value, gv = parseFloat($('#h-gv', d).value);
       if (gby) {
