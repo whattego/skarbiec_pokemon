@@ -607,7 +607,8 @@ function catRow(id) { return S.catMap?.get(+id) || null; }
 function nowPrice(it) {           // [trend, low, avg7, avg30, avg1] – historia bota, a gdy jej jeszcze nie ma: dzisiejszy katalog
   const h = hist(keyOf(it)); if (h.length) return { trend: h.at(-1)[1], low: h.at(-1)[2], avg7: h.at(-1)[3], avg30: h.at(-1)[4], avg1: h.at(-1)[5], src: 'h', day: h.at(-1)[0] };
   const r = catRow(it.id); if (!r) return null;
-  return it.holo ? { trend: r[9], low: null, avg7: null, avg30: null, avg1: null, src: 'c' } : { trend: r[4], low: r[5], avg1: r[6], avg7: r[7], avg30: r[8], src: 'c' };
+  // Reverse Holo bez osobnej ceny w cenniku (np. karty JP) – cena zwykłej wersji zamiast braku ceny
+  return it.holo && r[9] ? { trend: r[9], low: null, avg7: null, avg30: null, avg1: null, src: 'c' } : { trend: r[4], low: r[5], avg1: r[6], avg7: r[7], avg30: r[8], src: 'c' };
 }
 function valueAgo(key, days) {
   const h = hist(key); if (!h.length) return null;
