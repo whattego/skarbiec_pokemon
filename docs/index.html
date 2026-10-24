@@ -213,7 +213,7 @@ const GH = {
   },
   async call(path, opts = {}, repo = this.repo) {
     if (!repo || !this.token) throw new Error('Brak tokenu GitHub lub nazwy repozytorium (Ustawienia).');
-    const r = await fetch(`${this.api}/repos/${repo}${path}`, { ...opts, headers: { Authorization: `Bearer ${this.token}`, Accept: opts.raw ? 'application/vnd.github.raw' : 'application/vnd.github+json', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
+    const r = await fetch(`${this.api}/repos/${repo}${path}`, { cache: 'no-store', ...opts, headers: { Authorization: `Bearer ${this.token}`, Accept: opts.raw ? 'application/vnd.github.raw' : 'application/vnd.github+json', ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
     if (!r.ok) { let m = ''; try { m = (await r.json()).message; } catch {} throw new Error(`GitHub ${r.status}${m ? ': ' + m : ''}`); }
     return r.status === 204 ? null : opts.raw ? r.blob() : r.json();
   },
@@ -235,10 +235,18 @@ const GH = {
 const PHOTOS = {
   get repo() { return ls.get('skarbiec_photo_repo') || (GH.repo ? `${GH.repo.split('/')[0]}/skarbiec-foto` : ''); },
   branch: null,
-  async put(path, blob, message) {
-    if (!this.branch) this.branch = (await GH.call('', {}, this.repo)).default_branch || 'main';
-    const body = { message, content: b64e(new Uint8Array(await blob.arrayBuffer())), branch: this.branch };
-    return GH.call(`/contents/${path}`, { method: 'PUT', body: JSON.stringify(body) }, this.repo);
+  // zapisy po kolei: dwa równoległe zapisy do jednego repo kończą się „GitHub 409” (gałąź przesunęła się w międzyczasie)
+  queue: Promise.resolve(),
+  enqueue(fn) { const job = this.queue.then(fn); this.queue = job.catch(() => {}); return job; },
+  put(path, blob, message) {
+    return this.enqueue(async () => {
+      if (!this.branch) this.branch = (await GH.call('', {}, this.repo)).default_branch || 'main';
+      const body = JSON.stringify({ message, content: b64e(new Uint8Array(await blob.arrayBuffer())), branch: this.branch });
+      for (let i = 0; ; i++) {
+        try { return await GH.call(`/contents/${path}`, { method: 'PUT', body }, this.repo); }
+        catch (e) { if (!/^GitHub 409\b/.test(e.message) || i >= 3) throw e; await new Promise(r => setTimeout(r, 800 * (i + 1))); }
+      }
+    });
   },
   urls: new Map(),
   url(path) {   // blob: URL do wyświetlenia (repo jest prywatne, więc przez API z tokenem)
@@ -280,9 +288,11 @@ async function syncTargets() {
   const json = JSON.stringify({ v: 1, items: [...seen.values()], lists });
   if (json === S._targets) return;
   try {
-    let sha; try { sha = (await GH.call('/contents/en/targets.json', {}, PHOTOS.repo)).sha; } catch (e) { if (!/ 404/.test(e.message)) throw e; }
-    if (!PHOTOS.branch) PHOTOS.branch = (await GH.call('', {}, PHOTOS.repo)).default_branch || 'main';
-    await GH.call('/contents/en/targets.json', { method: 'PUT', body: JSON.stringify({ message: `lista kart do cen EN/NM (${seen.size}) i progi (${lists.length})`, content: b64e(new TextEncoder().encode(json)), branch: PHOTOS.branch, ...(sha ? { sha } : {}) }) }, PHOTOS.repo);
+    await PHOTOS.enqueue(async () => {   // ta sama kolejka co zdjęcia – równoległe zapisy do repo dają 409
+      let sha; try { sha = (await GH.call('/contents/en/targets.json', {}, PHOTOS.repo)).sha; } catch (e) { if (!/ 404/.test(e.message)) throw e; }
+      if (!PHOTOS.branch) PHOTOS.branch = (await GH.call('', {}, PHOTOS.repo)).default_branch || 'main';
+      await GH.call('/contents/en/targets.json', { method: 'PUT', body: JSON.stringify({ message: `lista kart do cen EN/NM (${seen.size}) i progi (${lists.length})`, content: b64e(new TextEncoder().encode(json)), branch: PHOTOS.branch, ...(sha ? { sha } : {}) }) }, PHOTOS.repo);
+    });
     S._targets = json;
   } catch (e) { console.warn('lista kart EN/NM:', e.message); }
 }
@@ -403,21 +413,54 @@ async function loadCatalog() {
 }
 
 // ---------------- zapis skarbca ----------------
-async function saveVault(msg) {
+// Scalanie trzystronne: base = ostatnia zapisana wersja na tym urządzeniu, local = zmiany tutaj, remote = nowsza wersja z GitHuba
+// (zmieniona np. na komputerze, gdy ty skanowałeś telefonem). Listy po kluczu: dodane/zmienione tutaj → biorę stąd,
+// usunięte tutaj → usuwam, resztę zostawiam z GitHuba. Pozostałe pola: zmienione tutaj → stąd, inaczej z GitHuba.
+const VAULT_KEYS = { portfolio: 'uid', watchlists: 'id', scans: 'path' };
+function mergeVault(base, local, remote) {
+  const out = { ...remote };
+  for (const k of new Set([...Object.keys(local), ...Object.keys(remote)])) {
+    const b = base[k], l = local[k], key = VAULT_KEYS[k];
+    if (key && Array.isArray(l)) {
+      const idx = arr => new Map((arr || []).map(x => [x[key], x]));
+      const B = idx(b), L = idx(l), res = idx(remote[k]);
+      for (const [id, x] of L) if (!B.has(id) || JSON.stringify(B.get(id)) !== JSON.stringify(x)) res.set(id, x);
+      for (const id of B.keys()) if (!L.has(id)) res.delete(id);
+      out[k] = [...res.values()];
+    } else if (JSON.stringify(l) !== JSON.stringify(b)) out[k] = l;
+  }
+  return out;
+}
+let saveQ = Promise.resolve();
+function saveVault(msg) { const job = saveQ.then(() => saveVaultNow(msg)); saveQ = job.catch(() => {}); return job; }   // zapisy po kolei
+async function saveVaultNow(msg) {
   const revert = () => { S.vault = JSON.parse(S.vaultSaved); };
   if (S.readOnly) { revert(); toast('Tryb tylko do odczytu – nic nie zapisano. Dodaj token GitHub w Ustawieniach.', 4500); return false; }
   S.vault.updated = new Date().toISOString();
-  const blob = await encryptBlob(S.vault, S.pw, S.vaultSalt);
-  try {
-    const r = await GH.putFile('docs/vault.enc', JSON.stringify(blob), S.vaultSha, msg || 'skarbiec: zmiana');
-    S.vaultSha = r.content.sha; S.vaultSaved = JSON.stringify(S.vault); toast('Zapisano ✓ Bot uwzględni zmiany przy najbliższym pomiarze.');
-    syncTargets();
-    return true;
-  } catch (e) {
-    revert();
-    if (/ 409| 422/.test(e.message)) toast('Skarbiec zmienił się na innym urządzeniu – odśwież stronę i spróbuj ponownie.', 5000);
-    else toast('Nie zapisano: ' + e.message, 5000);
-    return false;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const blob = await encryptBlob(S.vault, S.pw, S.vaultSalt);
+      const r = await GH.putFile('docs/vault.enc', JSON.stringify(blob), S.vaultSha, msg || 'skarbiec: zmiana');
+      S.vaultSha = r.content.sha; S.vaultSaved = JSON.stringify(S.vault);
+      toast(attempt ? 'Zapisano ✓ (połączone ze zmianami z innego urządzenia)' : 'Zapisano ✓ Bot uwzględni zmiany przy najbliższym pomiarze.');
+      syncTargets();
+      return true;
+    } catch (e) {
+      if (/ 409| 422/.test(e.message) && attempt < 3) {
+        // skarbiec zmienił się gdzie indziej – pobierz nowszą wersję, scal i zapisz jeszcze raz
+        try {
+          const f = await GH.getFile('docs/vault.enc');
+          const r = await decryptBlob(JSON.parse(f.text), S.pw);
+          S.vault = mergeVault(JSON.parse(S.vaultSaved), S.vault, r.obj);
+          S.vault.watchlists ||= []; S.vault.portfolio ||= [];
+          S.vaultSha = f.sha; S.vaultSalt = r.salt;
+          continue;
+        } catch (e2) { e = e2; }
+      }
+      revert();
+      toast('Nie zapisano: ' + e.message, 6000);
+      return false;
+    }
   }
 }
 
@@ -752,8 +795,23 @@ async function scaleImage(file, max, type, q) {
 const TD = 'https://api.tcgdex.net/v2', tdCache = new Map();
 const td = path => { if (!tdCache.has(path)) tdCache.set(path, fetch(`${TD}/${path}`).then(r => r.ok ? r.json() : null).catch(() => { tdCache.delete(path); return null; })); return tdCache.get(path); };
 const normNo = s => String(s || '').toUpperCase().replace(/\s/g, '').replace(/^([A-Z]*)0+(?=\d)/, '$1');
+// podobieństwo nazw (współczynnik Dice na parach liter) – do zapasowego dopasowania po numerze
+function nameSim(a, b) {
+  const pairs = s => { s = String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, ''); const m = new Map(); for (let i = 0; i < s.length - 1; i++) { const p = s.slice(i, i + 2); m.set(p, (m.get(p) || 0) + 1); } return m; };
+  const x = pairs(a), y = pairs(b); let both = 0, n = 0;
+  for (const [p, k] of x) { both += Math.min(k, y.get(p) || 0); n += k; }
+  for (const k of y.values()) n += k;
+  return n ? 2 * both / n : 0;
+}
+const JA_SCRIPT = /[぀-ヿ一-鿿]/;
+// Język wybieramy po piśmie nazwy, nie po ocenie modelu (odblask na toploaderze potrafi dać „ja” dla angielskiej karty).
+// Najpierw język zgodny z pismem, potem drugi.
 async function resolveCard(c) {
-  const lang = c.language === 'ja' ? 'ja' : 'en';
+  const order = JA_SCRIPT.test(c.name) ? ['ja', 'en'] : ['en', 'ja'];
+  for (const lang of order) { const r = await resolveIn(lang, c); if (r.length) return r; }
+  return [];
+}
+async function resolveIn(lang, c) {
   const sets = await td(`${lang}/sets`) || [], setById = new Map(sets.map(s => [s.id, s]));
   const no = normNo(c.number), tot = parseInt(c.set_total, 10) || null, setOf = id => id.slice(0, id.lastIndexOf('-'));
   const byName = async n => n ? await td(`${lang}/cards?name=${encodeURIComponent(n)}`) || [] : [];
@@ -764,7 +822,8 @@ async function resolveCard(c) {
   if (!cand.length && no && tot) {   // nazwa źle odczytana – szukamy po wielkości dodatku i numerze
     for (const s of sets.filter(s => s.cardCount?.official === tot).slice(-6)) {
       const hit = (await td(`${lang}/sets/${encodeURIComponent(s.id)}`))?.cards?.find(x => normNo(x.localId) === no);
-      if (hit) cand.push(hit);
+      // tylko gdy nazwa choć trochę pasuje (to samo pismo, ≥ 40% wspólnych par liter) – inaczej „Sylveon” trafiłby na „Charizard”
+      if (hit && JA_SCRIPT.test(hit.name) === JA_SCRIPT.test(c.name) && nameSim(hit.name, c.name) >= 0.4) cand.push(hit);
     }
   }
   const full = (await Promise.all(cand.slice(0, 8).map(b => td(`${lang}/cards/${encodeURIComponent(b.id)}`)))).filter(Boolean);
@@ -805,7 +864,8 @@ async function scanJob(j) {
     try { await loadCatalog(); } catch {}
     j.cards = await Promise.all((out.cards || []).map(async det => {
       const cands = await resolveCard(det);
-      return { det, cands, sel: cands.length ? 0 : -1, holo: det.variant === 'reverse_holo', qty: 1, cost: '', on: cands.length === 1 && !!cands[0].idp && det.confidence === 'high' };
+      // Reverse Holo tylko, gdy Cardmarket ma dla tej karty osobną cenę RH (np. karty LEGEND/ex są holo, ale nie „reverse”)
+      return { det, cands, sel: cands.length ? 0 : -1, holo: det.variant === 'reverse_holo' && !!catRow(cands[0]?.idp)?.[9], qty: 1, cost: '', on: cands.length === 1 && !!cands[0].idp && det.confidence === 'high' };
     }));
     j.status = 'gotowe';
   } catch (e) { j.status = 'błąd'; j.err = aiError(e); }
@@ -821,7 +881,7 @@ async function savePhoto(j) {   // każde zrobione zdjęcie trafia do prywatnego
     await PHOTOS.put(path, blob, `foto: ${j.cards.length} kart`);
     j.photo = path; j.photoErr = null;
     PHOTOS.urls.set(path, Promise.resolve(j.url));
-  } catch (e) { j.photoErr = /40[34]/.test(e.message) ? `Brak dostępu do ${PHOTOS.repo} – dodaj to repozytorium do tokenu GitHub.` : e.message; }
+  } catch (e) { j.photoErr = /^GitHub 40[34]\b/.test(e.message) ? `Brak dostępu do ${PHOTOS.repo} – dodaj to repozytorium do tokenu GitHub.` : e.message; }
   scQueue();
 }
 function scPump() {
