@@ -310,7 +310,8 @@ async function loadEN() {
     const m = new Map();
     for (const d of docs.filter(Boolean)) for (const [k, v] of Object.entries(d.items || {})) {
       const cur = m.get(k);
-      if (!cur || cur.t < d.t) m.set(k, { ...v, t: d.t, list: d.name || d.list });
+      const t = v.t || d.t;   // czas pomiaru karty (rozszerzenie scala częściowe sprawdzenia w jednym pliku)
+      if (!cur || cur.t < t) m.set(k, { ...v, t, list: d.name || d.list });
     }
     S.en = m;
   } catch (e) { console.warn('ceny EN/NM:', e.message); }
@@ -371,8 +372,8 @@ async function reverifyOnce() {
   }
   if (n && await saveVault(`weryfikacja: nowe wersje dla ${n} kart`)) {
     await syncVerify(); await applyVerify();
-    if (document.documentElement.dataset.skarbiecEnExt) document.dispatchEvent(new Event('skarbiec-en-run'));   // rozszerzenie sprawdzi numery od razu
-    else requestDesktop('en');
+    if (document.documentElement.dataset.skarbiecEnExt) { document.documentElement.dataset.skarbiecEnScope = 'p'; document.dispatchEvent(new Event('skarbiec-en-run')); }   // rozszerzenie sprawdzi numery od razu (tylko portfel)
+    else requestDesktop('en:p');
   }
 }
 async function applyVerify() {
@@ -470,8 +471,8 @@ function sellTip(h) {   // podpowiedź na znaczku „CM”: kiedy wystawiona, os
     l.miss ? `${dPL(l.miss.slice(0, 10))}: nie widać oferty na stronie karty (sprzedana albo zdjęta?)` : '', l.rerr ? 'błąd aktualizacji: ' + l.rerr : ''].filter(Boolean).join('\n');
 }
 function sellKick() {   // od razu poproś rozszerzenie o przebieg (na komputerze) albo zleć go komputerowi (telefon)
-  if (document.documentElement.dataset.skarbiecEnExt) document.dispatchEvent(new Event('skarbiec-en-run'));
-  else requestDesktop('en').then(ok => ok && toast('Zlecone komputerowi – karta zostanie wystawiona w ciągu ok. 5 min (Chrome z rozszerzeniem musi być włączony).', 5000));
+  if (document.documentElement.dataset.skarbiecEnExt) { document.documentElement.dataset.skarbiecEnScope = 'p'; document.dispatchEvent(new Event('skarbiec-en-run')); }
+  else requestDesktop('en:p').then(ok => ok && toast('Zlecone komputerowi – karta zostanie wystawiona w ciągu ok. 5 min (Chrome z rozszerzeniem musi być włączony).', 5000));
 }
 
 async function syncTargets() {
@@ -482,8 +483,10 @@ async function syncTargets() {
   // wcześniej rozszerzenie sprawdzało cały portfel, po skanowaniu setek commonów 150 stron na przebieg)
   const pfTrend = h => { const r = catRow(h.id); return r ? (h.holo ? r[9] || r[4] : r[4]) : null; };
   const pfCheck = h => !h.sold && (h.grade?.by || !(bulkMin() > 0) || pfTrend(h) == null || pfTrend(h) >= bulkMin());
-  for (const it of [...(S.vault.watchlists || []).flatMap(w => w.items || []), ...(S.vault.portfolio || []).filter(pfCheck), ...marketWatch()])
-    if (+it.id > 0 && !seen.has(keyOf(it))) seen.set(keyOf(it), { id: +it.id, holo: !!it.holo, name: itemMeta(it).name });
+  // src: 'w' = watchlista / Rynek, 'p' = portfel – przycisk w Portfelu sprawdza tylko 'p', na watchliście tylko 'w', automat wszystko
+  const add = (it, src) => { if (!(+it.id > 0)) return; const k = keyOf(it), e = seen.get(k); if (e) { if (!e.src.includes(src)) e.src += src; return; } seen.set(k, { id: +it.id, holo: !!it.holo, name: itemMeta(it).name, src }); };
+  for (const it of [...(S.vault.watchlists || []).flatMap(w => w.items || []), ...marketWatch()]) add(it, 'w');
+  for (const it of (S.vault.portfolio || []).filter(pfCheck)) add(it, 'p');
   // progi list „komplet z wysyłką” – rozszerzenie dopasowuje je do Wants Listy po składzie (idProduct) i używa do auto-koszyka
   const lists = (S.vault.watchlists || []).filter(w => w.metric === 'komplet' && w.target_eur)
     .map(w => ({ id: w.id, name: w.name, target_eur: +w.target_eur, ids: [...new Set((w.items || []).map(it => +it.id))] }));
@@ -909,7 +912,7 @@ function vWatch(v) {
   ${!S.catalog ? `<div class="banner" style="margin-bottom:12px">⏳ Brak cennika – bot jeszcze ani razu nie pobrał cen, więc nie ma nazw ani trendów. <button class="btn sm" data-act="runbot">▶ Uruchom bota</button> i odśwież stronę za ok. 3 minuty.</div>` : ''}
   <div class="card">
     <div class="spread"><div><h2 style="margin:0">${esc(wl.name)}</h2><div class="muted" style="font-size:12px">${items.length} pozycji · próg porównywany z ${wl.metric === 'komplet' ? 'kompletem EN/NM z wysyłką (rozszerzenie: auto-koszyk + Discord)' : wl.metric === 'avg7' ? 'sumą średnich 7 dni (bot)' : 'sumą trendu (bot)'}</div></div>
-      <div class="row"><button class="btn sm primary" data-act="enRefresh" ${S.enStatus?.state === 'run' ? 'disabled' : ''}>🔄 Uaktualnij ceny EN/NM</button><button class="btn sm" data-act="addto" data-mode="watch">+ Dodaj pozycję</button><button class="btn sm" data-act="editwl">Ustawienia listy</button><button class="btn sm" data-act="exportwl">Kopiuj JSON</button></div></div>
+      <div class="row"><button class="btn sm primary" data-act="enRefresh" data-scope="w" ${S.enStatus?.state === 'run' ? 'disabled' : ''}>🔄 Uaktualnij ceny EN/NM</button><button class="btn sm" data-act="addto" data-mode="watch">+ Dodaj pozycję</button><button class="btn sm" data-act="editwl">Ustawienia listy</button><button class="btn sm" data-act="exportwl">Kopiuj JSON</button></div></div>
     <div style="text-align:right;margin-top:4px">${enStatusHTML()}</div>
     <div class="grid g4" style="margin:14px 0">
       <div class="stat"><div class="lbl">Komplet EN/NM z wysyłką</div><div class="val">${E(buyNow)}</div><div class="note">${opt ? `${opt.sellers} paczek · same karty ${E(opt.cards)} · liczone ${agoPL(opt.t)}${opt.verified ? ' · wysyłki sprawdzone w koszyku' : ` · <span title="${esc(UNV_WHY[opt.why] || '')}">${opt.unv ? `${opt.unv} z ${opt.sellers}` : 'część'} wysyłek z tabeli${opt.why ? ' – ' + esc(UNV_SHORT[opt.why] || '') : ''}</span>`}` : `same karty: ${E(enNow)}${enNow != null ? ' bez wysyłki' : ''} · wysyłkę policzy optymalizator Cardmarketu`}</div></div>
@@ -1056,7 +1059,7 @@ function vPortfel(v) {
   <div class="spread"><div><h1>Portfel</h1><p class="sub">Co masz, ile za to dałeś i ile to jest warte dziś. Wartość według: <select id="pf-metric" ${S.readOnly ? 'disabled' : ''}>${Object.entries(PF_METRICS).map(([k, [l]]) => `<option value="${k}" ${pfMetric() === k ? 'selected' : ''}>${l}</option>`).join('')}</select> z Cardmarketu (wszystkie języki, cennik raz na dobę).</p></div>
     <button class="btn primary" data-act="addto" data-mode="portfel">+ Dodaj do portfela</button></div>
   ${pendingVerify().length ? `<div class="banner" style="margin-bottom:12px">🔎 ${pendingVerify().length} kart czeka na weryfikację wersji (JP/promo). Rozszerzenie Chrome sprawdzi ich numery na Cardmarkecie i Skarbiec sam poprawi pozycje.
-    <button class="btn sm" data-act="enRefresh">${enScript() ? 'Sprawdź teraz' : 'Zleć komputerowi'}</button></div>` : ''}
+    <button class="btn sm" data-act="enRefresh" data-scope="p">${enScript() ? 'Sprawdź teraz' : 'Zleć komputerowi'}</button></div>` : ''}
   ${pf.active.filter(r => gradeDue(r.h)).map(r => `<div class="banner" style="margin-bottom:12px">🏷️ <b>${esc(r.m.name)} ${esc(gradeLbl(r.h))}</b>: ${r.graded ? `wycena z ${dPL(r.h.grade.t)} ma ponad ${GRADE_REMIND_D} dni` : 'slab nie ma jeszcze wyceny – liczę go po cenie karty bez gradingu'}.
     <button class="btn sm primary" data-act="gradeval" data-uid="${r.h.uid}">Wyceń teraz</button> <a href="${esc(gradeSoldUrl(r.h))}" target="_blank" rel="noopener">sprzedane na eBay ↗</a></div>`).join('')}
   <div class="grid g4">
@@ -1112,8 +1115,8 @@ async function marketCheck(ids) {   // dopisz do listy sprawdzania EN/NM i od ra
   rynekResults();
   if (!await saveVault(`rynek: sprawdź EN/NM (${ids.length})`)) return;
   await syncTargets();
-  if (document.documentElement.dataset.skarbiecEnExt) { document.dispatchEvent(new Event('skarbiec-en-run')); toast(`Rozszerzenie sprawdza ${ids.length} pozycji (ok. 3 s na kartę) – wynik pojawi się tutaj sam.`, 5000); }
-  else if (await requestDesktop('en')) toast('Zlecone komputerowi – wynik w ciągu kilku minut (Chrome z rozszerzeniem musi być włączony).', 5000);
+  if (document.documentElement.dataset.skarbiecEnExt) { document.documentElement.dataset.skarbiecEnScope = 'w'; document.dispatchEvent(new Event('skarbiec-en-run')); toast(`Rozszerzenie sprawdza ${ids.length} pozycji (ok. 3 s na kartę) – wynik pojawi się tutaj sam.`, 5000); }
+  else if (await requestDesktop('en:w')) toast('Zlecone komputerowi – wynik w ciągu kilku minut (Chrome z rozszerzeniem musi być włączony).', 5000);
 }
 // sealed: cennik CM nie podaje średnich – porównujemy trend z dziennym zrzutem bota (snap/) sprzed ~7 dni (najstarszy, jeśli młodszy)
 const SNAP = { day: null, map: null, loading: null };
@@ -1766,7 +1769,7 @@ async function scApprove() {
     toast(`Dodano ${tasks.length} kart do portfela ✓${tasks.some(t => t.c.cropPlan && !t.c.cropPath) || tasks.some(t => !t.j.photo && !t.j.noPhoto) ? ' Zdjęcia dosyłam w tle.' : ''}`, 4000);
     const recs = tasks.map(t => t.rec);
     // karty JP/promo do weryfikacji albo bez zdjęcia z Cardmarketu: na telefonie zleć komputerowi, na komputerze uruchom od razu
-    if (recs.some(r => r.verify || !r.img)) { if (enScript()) ACT.enRefresh(); else requestDesktop('en'); }
+    if (recs.some(r => r.verify || !r.img)) { if (enScript()) ACT.enRefresh({ dataset: { scope: 'p' } }); else requestDesktop('en:p'); }
     scUploadAfter(tasks);   // w tle – nie czekamy
   } catch (e) {
     toast('Nie dodano do portfela: ' + e.message, 6000);
@@ -2148,11 +2151,13 @@ const ACT = {
     catch (e) { res.push(`<span class="down">repo zdjęć: ${esc(/ 404/.test(e.message) ? 'nie istnieje albo token nie ma do niego dostępu' : e.message)}</span>`); }
     out.innerHTML = res.join(' · ');
   },
-  enRefresh: async () => {
+  // zakres: 'w' (watchlista: jej karty + komplet), 'p' (portfel: karty ≥ 0,5 € + weryfikacja wersji), brak = wszystko
+  enRefresh: async a => {
+    const scope = a?.dataset?.scope || '', komplet = scope !== 'p' && (S.vault.watchlists || []).some(w => w.metric === 'komplet');
     if (!enScript() && GH.token && !S.readOnly) {   // telefon / przeglądarka bez rozszerzenia: zleć komputerowi
       S.enStatus = { state: 'queued', text: 'zlecam komputerowi…', t: Date.now() }; render();
       await syncTargets(); await syncVerify();
-      const ok = await requestDesktop((S.vault.watchlists || []).some(w => w.metric === 'komplet') ? 'en+komplet' : 'en');
+      const ok = await requestDesktop(`en${scope ? ':' + scope : ''}${komplet ? '+komplet' : ''}`);
       S.enStatus = ok ? { state: 'queued', text: `zlecone o ${new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })} – komputer z rozszerzeniem zrobi to w ciągu ok. 5 min (musi być włączony). Odśwież stronę później.`, t: Date.now() }
         : { state: 'err', text: 'nie udało się zapisać zlecenia', t: Date.now() };
       render(); return;
@@ -2167,9 +2172,10 @@ const ACT = {
     if (document.documentElement.dataset.skarbiecEnExt) {   // rozszerzenie Chrome: samo otworzy Cardmarket w tle i zamknie
       S.enStatus = { state: 'run', text: 'rozszerzenie otwiera Cardmarket w tle…', t: Date.now() }; render();
       await syncTargets();
+      document.documentElement.dataset.skarbiecEnScope = scope;   // en.js przekaże zakres rozszerzeniu
       document.dispatchEvent(new Event('skarbiec-en-run'));
       // listy „komplet z wysyłką”: od razu pełne liczenie optymalizatora (do 15 sprawdzeń wysyłki w koszyku, jak w #watch)
-      if ((S.vault.watchlists || []).some(w => w.metric === 'komplet')) document.dispatchEvent(new Event('skarbiec-komplet-run'));
+      if (komplet) document.dispatchEvent(new Event('skarbiec-komplet-run'));
       return;
     }
     // Cloudflare Cardmarketu wpuszcza tylko zapytania z karty cardmarket.com – otwieramy ją (w tym samym kliknięciu, żeby nie zablokowało okienek),
