@@ -274,12 +274,15 @@ async function syncTargets() {
   const seen = new Map();
   for (const it of [...(S.vault.watchlists || []).flatMap(w => w.items || []), ...(S.vault.portfolio || []).filter(h => !h.sold)])
     if (+it.id > 0 && !seen.has(keyOf(it))) seen.set(keyOf(it), { id: +it.id, holo: !!it.holo, name: itemMeta(it).name });
-  const json = JSON.stringify({ v: 1, items: [...seen.values()] });
+  // progi list „komplet z wysyłką” – rozszerzenie dopasowuje je do Wants Listy po składzie (idProduct) i używa do auto-koszyka
+  const lists = (S.vault.watchlists || []).filter(w => w.metric === 'komplet' && w.target_eur)
+    .map(w => ({ id: w.id, name: w.name, target_eur: +w.target_eur, ids: [...new Set((w.items || []).map(it => +it.id))] }));
+  const json = JSON.stringify({ v: 1, items: [...seen.values()], lists });
   if (json === S._targets) return;
   try {
     let sha; try { sha = (await GH.call('/contents/en/targets.json', {}, PHOTOS.repo)).sha; } catch (e) { if (!/ 404/.test(e.message)) throw e; }
     if (!PHOTOS.branch) PHOTOS.branch = (await GH.call('', {}, PHOTOS.repo)).default_branch || 'main';
-    await GH.call('/contents/en/targets.json', { method: 'PUT', body: JSON.stringify({ message: `lista kart do cen EN/NM (${seen.size})`, content: b64e(new TextEncoder().encode(json)), branch: PHOTOS.branch, ...(sha ? { sha } : {}) }) }, PHOTOS.repo);
+    await GH.call('/contents/en/targets.json', { method: 'PUT', body: JSON.stringify({ message: `lista kart do cen EN/NM (${seen.size}) i progi (${lists.length})`, content: b64e(new TextEncoder().encode(json)), branch: PHOTOS.branch, ...(sha ? { sha } : {}) }) }, PHOTOS.repo);
     S._targets = json;
   } catch (e) { console.warn('lista kart EN/NM:', e.message); }
 }
@@ -296,6 +299,11 @@ function enSeries(items) {
 }
 // skrypt Tampermonkey działa też na tej stronie: ustawia dataset.skarbiecEn (wersja) i przekazuje postęp z karty Cardmarketu (skarbiec-en-status)
 const enScript = () => document.documentElement.dataset.skarbiecEn || null;
+// wynik optymalizatora (komplet EN/NM z wysyłką) dla watchlisty o tym samym składzie (te same idProduct)
+function optFor(wl) {
+  const ids = new Set((wl.items || []).map(it => +it.id));
+  return (S.opt || []).filter(o => o.ids?.length === ids.size && o.ids.every(id => ids.has(+id))).sort((a, b) => a.t < b.t ? 1 : -1)[0] || null;
+}
 document.addEventListener('skarbiec-en-status', () => {
   try { S.enStatus = JSON.parse(document.documentElement.dataset.skarbiecEnStatus || 'null'); } catch { return; }
   if (!S.vault) return;   // jeszcze przed zalogowaniem – status pokaże się po wejściu
@@ -526,7 +534,8 @@ function vPulpit(v) {
   ${wls.length ? `<h2 style="margin:20px 0 10px">Watchlisty</h2><div class="grid g3">${wls.map(wl => {
     const ser = seriesSum(wl.items || []), now = ser.at(-1)?.[1] ?? (wl.items || []).reduce((a, it) => a + (nowPrice(it)?.trend || 0) * (it.qty || 1), 0);
     const wk = ser.filter(([d]) => d <= addDays(ser.at(-1)?.[0] || '', -7)).at(-1)?.[1];
-    const p7 = pct(now, wk), below = wl.target_eur && now > 0 && now <= wl.target_eur;
+    const cmp = wl.metric === 'komplet' ? optFor(wl)?.total : now;
+    const p7 = pct(now, wk), below = wl.target_eur && cmp > 0 && cmp <= wl.target_eur;
     return `<button class="card" style="text-align:left;cursor:pointer" data-act="openwl" data-id="${esc(wl.id)}">
       <div class="spread"><b>${esc(wl.name)}</b>${wl.target_eur ? (below ? '<span class="badge good"><span class="dot"></span>Poniżej progu</span>' : `<span class="badge">próg ${E(wl.target_eur)}</span>`) : ''}</div>
       <div class="spread" style="margin-top:8px;align-items:flex-end"><div><div class="val" style="font-size:20px;font-weight:650">${E(now)}</div>
@@ -561,12 +570,14 @@ function vWatch(v) {
   const now = ser.at(-1)?.[1] ?? items.reduce((a, it) => a + (nowPrice(it)?.trend || 0) * (it.qty || 1), 0);
   const enNow = items.length && items.every(it => enOf(it)?.min != null) ? items.reduce((a, it) => a + enOf(it).min * (it.qty || 1), 0) : null;
   // komplet z wysyłką: wynik optymalizatora dla Wants Listy o tym samym składzie (te same idProduct)
-  const ids = new Set(items.map(it => +it.id));
-  const opt = (S.opt || []).filter(o => o.ids?.length === ids.size && o.ids.every(id => ids.has(+id))).sort((a, b) => a.t < b.t ? 1 : -1)[0] || null;
+  const opt = optFor(wl);
   const optSer = opt ? [...(opt.hist || []).reduce((m, [t, v]) => { const d = new Date(t).toLocaleDateString('sv-SE'); m.set(d, Math.min(m.get(d) ?? Infinity, v)); return m; }, new Map())].sort((a, b) => a[0] < b[0] ? -1 : 1) : [];
   for (const [d] of optSer) if (!labels.includes(d)) labels.push(d);
   labels.sort();
-  const buyNow = opt?.total ?? null;   // to porównujemy z progiem okazji
+  const buyNow = opt?.total ?? null;
+  // lista, dla której rozszerzenie liczy komplet z wysyłką, ma próg „komplet z wysyłką” (bot nie wysyła wtedy fałszywych 🔥 z trendu)
+  if (opt && !wl.metric_set && wl.metric !== 'komplet' && !S.readOnly) { wl.metric = 'komplet'; wl.metric_set = true; saveVault('watchlista: próg = komplet EN/NM z wysyłką'); }
+  const cmpNow = wl.metric === 'komplet' ? buyNow : now, cmpLabel = wl.metric === 'komplet' ? 'komplet z wysyłką' : 'suma trendu';
   const back = n => ser.filter(([d]) => d <= addDays(ser.at(-1)?.[0] || '', -n)).at(-1)?.[1];
   const peak = ser.length ? Math.max(...ser.map(r => r[1])) : null;
   const avg30sum = items.every(it => nowPrice(it)?.avg30) ? items.reduce((a, it) => a + nowPrice(it).avg30 * (it.qty || 1), 0) : null;
@@ -579,14 +590,14 @@ function vWatch(v) {
   $('#wlbody').innerHTML = `
   ${!S.catalog ? `<div class="banner" style="margin-bottom:12px">⏳ Brak cennika – bot jeszcze ani razu nie pobrał cen, więc nie ma nazw ani trendów. <button class="btn sm" data-act="runbot">▶ Uruchom bota</button> i odśwież stronę za ok. 3 minuty.</div>` : ''}
   <div class="card">
-    <div class="spread"><div><h2 style="margin:0">${esc(wl.name)}</h2><div class="muted" style="font-size:12px">${items.length} pozycji · suma według ${wl.metric === 'avg7' ? 'średniej z 7 dni' : 'trendu'} Cardmarketu</div></div>
+    <div class="spread"><div><h2 style="margin:0">${esc(wl.name)}</h2><div class="muted" style="font-size:12px">${items.length} pozycji · próg porównywany z ${wl.metric === 'komplet' ? 'kompletem EN/NM z wysyłką (rozszerzenie: auto-koszyk + Discord)' : wl.metric === 'avg7' ? 'sumą średnich 7 dni (bot)' : 'sumą trendu (bot)'}</div></div>
       <div class="row"><button class="btn sm primary" data-act="enRefresh" ${S.enStatus?.state === 'run' ? 'disabled' : ''}>🔄 Uaktualnij ceny EN/NM</button><button class="btn sm" data-act="addto" data-mode="watch">+ Dodaj pozycję</button><button class="btn sm" data-act="editwl">Ustawienia listy</button><button class="btn sm" data-act="exportwl">Kopiuj JSON</button></div></div>
     <div style="text-align:right;margin-top:4px">${enStatusHTML()}</div>
     <div class="grid g4" style="margin:14px 0">
       <div class="stat"><div class="lbl">Komplet EN/NM z wysyłką</div><div class="val">${E(buyNow)}</div><div class="note">${opt ? `${opt.sellers} paczek · same karty ${E(opt.cards)} · liczone ${agoPL(opt.t)}${opt.verified ? '' : ' · część wysyłek z tabeli'}` : `same karty: ${E(enNow)}${enNow != null ? ' bez wysyłki' : ''} · wysyłkę policzy optymalizator Cardmarketu`}</div></div>
       <div class="stat"><div class="lbl">Suma wg trendu</div><div class="val">${E(now)}</div><div class="note">≈ ${P(now * fxNow())} · wszystkie języki</div></div>
       <div class="stat"><div class="lbl">Zmiana 7 dni</div><div class="val ${cls(pct(now, back(7)))}">${PC(pct(now, back(7)))}</div><div class="note">30 dni: ${PC(pct(now, back(30)))} · vs śr. 30 dni: ${PC(pct(now, avg30sum))}</div></div>
-      <div class="stat"><div class="lbl">Próg okazji</div><div class="val">${wl.target_eur ? E(wl.target_eur) : '—'}</div><div class="note">${wl.target_eur ? ((buyNow ?? enNow) != null ? ((buyNow ?? enNow) <= wl.target_eur ? `<span class="badge good"><span class="dot"></span>${buyNow != null ? 'komplet z wysyłką' : 'EN/NM'} poniżej progu</span>` : `${buyNow != null ? 'komplet z wysyłką' : 'EN/NM'}: brakuje ${E((buyNow ?? enNow) - wl.target_eur)}`) : !(now > 0) ? 'brak cen' : now <= wl.target_eur ? '<span class="badge good"><span class="dot"></span>trend poniżej progu</span>' : `trend: brakuje ${E(now - wl.target_eur)}`) : '<a href="#" data-act="editwl">ustaw próg</a>'}</div></div>
+      <div class="stat"><div class="lbl">Próg okazji</div><div class="val">${wl.target_eur ? E(wl.target_eur) : '—'}</div><div class="note">${wl.target_eur ? (cmpNow > 0 ? (cmpNow <= wl.target_eur ? `<span class="badge good"><span class="dot"></span>${cmpLabel} poniżej progu</span>` : `${cmpLabel}: brakuje ${E(cmpNow - wl.target_eur)}`) + (wl.metric === 'komplet' ? '<br>rozszerzenie: auto-koszyk + Discord' : '<br>bot: alert raz dziennie') : wl.metric === 'komplet' ? 'czeka na pierwsze liczenie rozszerzenia' : 'brak cen') : '<a href="#" data-act="editwl">ustaw próg</a>'}</div></div>
     </div>
     ${labels.length >= 2 || enSer.length || optSer.length ? legend([...(optSer.length ? [['Komplet EN/NM z wysyłką (najtaniej w dniu)', css('--s2')]] : []), ['Same karty EN/NM', css('--s3')], ['Suma wg trendu', css('--s1')], ...(wl.target_eur ? [['Próg okazji', css('--s4'), true]] : [])]) + '<div class="chart"><canvas id="c-wl"></canvas></div>' : `<div class="banner">📈 Wykres pojawi się po drugim pomiarze bota albo po pierwszym „Uaktualnij ceny EN/NM”.</div>`}
   </div>
@@ -1212,8 +1223,12 @@ function formSell(h) {
 function formWatchlist(wl) {
   modal(wl ? 'Ustawienia listy' : 'Nowa watchlista', `<div class="grid g2" style="gap:10px">
     <label class="f">Nazwa<input type="text" id="w-n" value="${esc(wl?.name || '')}" placeholder="np. Ascended Heroes SIR"></label>
-    <label class="f">Próg okazji – suma listy w € (opcjonalnie)<input type="number" id="w-t" step="1" min="0" value="${wl?.target_eur ?? ''}"></label>
-    <label class="f">Liczona wg<select id="w-m"><option value="trend">trendu (szybko reaguje)</option><option value="avg7" ${wl?.metric === 'avg7' ? 'selected' : ''}>średniej 7 dni (spokojniejsza)</option></select></label></div>
+    <label class="f">Próg okazji w € (opcjonalnie)<input type="number" id="w-t" step="0.5" min="0" value="${wl?.target_eur ?? ''}"></label>
+    <label class="f" style="grid-column:1/-1">Próg porównuj z<select id="w-m">
+      <option value="komplet">kompletem EN/NM z wysyłką – rozszerzenie Chrome: auto-koszyk + Discord</option>
+      <option value="trend" ${wl?.metric === 'trend' ? 'selected' : ''}>sumą trendu Cardmarketu – alert bota raz dziennie</option>
+      <option value="avg7" ${wl?.metric === 'avg7' ? 'selected' : ''}>sumą średnich 7 dni – alert bota raz dziennie</option></select></label></div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Komplet z wysyłką liczy rozszerzenie dla Wants Listy o tym samym składzie (numer listy w ustawieniach rozszerzenia).</p>
     <div class="spread" style="margin-top:14px"><div class="row"><button class="btn primary" id="w-ok">${wl ? 'Zapisz' : 'Utwórz'}</button><button class="btn" data-close>Anuluj</button></div>${wl ? '<button class="btn danger" id="w-del">Usuń listę</button>' : ''}</div>`, d => {
     $('#w-ok', d).onclick = async () => {
       const n = $('#w-n', d).value.trim(); if (!n) return toast('Podaj nazwę.');

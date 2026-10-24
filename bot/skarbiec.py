@@ -416,7 +416,9 @@ def main():
         else:
             now = ser[-1][1]
             target = wl.get("target_eur")
-            if target:
+            # metric == "komplet": próg to komplet EN/NM z wysyłką – sprawdza go rozszerzenie Chrome (auto-koszyk + Discord),
+            # bot zna tylko trend (same karty, wszystkie języki), więc tu by alarmował fałszywie
+            if target and wl.get("metric") != "komplet":
                 below = now <= float(target)
                 if below and not st.get(f"wl:{wid}:below"):
                     alert("buy", f"🔥 OKAZJA: {wl['name']} poniżej progu",
