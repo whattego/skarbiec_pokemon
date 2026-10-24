@@ -845,7 +845,8 @@ function vWatch(v) {
   // komplet z wysyłką: wynik optymalizatora dla Wants Listy o tym samym składzie (te same idProduct)
   const opt = optFor(wl);
   // każdy pomiar osobno: komplet (rozszerzenie, co ~15 min), same karty EN/NM (każde sprawdzenie), trend (bot, raz dziennie)
-  const optPts = opt ? (opt.hist || []).map(([t, v]) => [Date.parse(t), v]).filter(p => p[0] && p[1] != null).sort((a, b) => a[0] - b[0]) : [];
+  // czas liczenia: optymalizator zapisuje ms (liczba), starsze wpisy mogą być tekstem ISO
+  const optPts = opt ? (opt.hist || []).map(([t, v]) => [typeof t === 'number' ? t : Date.parse(t), v]).filter(p => p[0] && p[1] != null).sort((a, b) => a[0] - b[0]) : [];
   const enPts = enPoints(items), trendPts = ser.map(([d, v]) => [Date.parse(d + 'T04:00:00'), v]);
   const optSer = optPts;
   const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
