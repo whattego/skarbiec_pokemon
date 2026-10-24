@@ -687,7 +687,7 @@ function vPortfel(v) {
   <div class="card" style="margin-top:12px"><h2>Pozycje</h2><div class="tblw"><table class="tbl">
     <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Najtaniej EN/NM / szt.</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
     ${pf.active.sort((a, b) => (b.value || 0) - (a.value || 0)).map(r => `<tr>
-      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span> ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set || KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
+      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${r.h.no ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set || KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
       <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
       <td>${enOf(r.h)?.min != null ? `${E(enOf(r.h).min)}<br><small class="muted">≈ ${P(enOf(r.h).min * fxNow())}</small>` : '<span class="muted">—</span>'}</td>
       <td class="${cls(r.plp)}">${r.pl != null ? `${r.pl >= 0 ? '+' : '−'}${P(Math.abs(r.pl))}<br><small>${PC(r.plp)}</small>` : '—'}</td>
@@ -753,15 +753,18 @@ For each card read the text printed on the card itself:
 - name: the card name exactly as printed, including suffixes like "ex", "V", "VMAX", "GX" and possessive trainer names ("Erika's Oddish"). Japanese cards: write the name in Japanese as printed.
 - number: the collector number before the slash, as printed (e.g. "215", "025", "TG23", "SV107", "GG56"); promos without a slash: the promo number (e.g. "131", "SWSH020").
 - set_total: the number after the slash ("203"), or "" if there is none.
-- set_code: the small set or promo code printed near the number (e.g. "EVS", "M-P", "SVP"), or "".
-- language: "en" for English cards, "ja" for Japanese, otherwise "other".
+- set_code: the small set or promo code printed near the number (e.g. "EVS", "M-P", "SVP", "XY-P", "M6a"), or "". For promos printed like "037/XY-P" the number is "037", set_total is "" and set_code is "XY-P".
+- language: the language of the text printed on the card: "en" for English, "ja" when names and attacks are in Japanese kana/kanji, otherwise "other". Judge by the printed text, not by glare or the sleeve.
+- name_en: the official English name of this card (for non-English cards translate it, e.g. "ミュウex" → "Mew ex", "ダークライ" → "Darkrai").
+- attacks_en: the official English names of the card's attacks and abilities, in printed order (e.g. ["Hypnoblast", "Deep Wind"]); [] for Trainer/Energy cards.
 - variant: "reverse_holo" when the whole card frame except the artwork is foil, "holo" when only the artwork is foil, "normal" when there is no foil, "unknown" if you cannot tell.
 - position: where the card is in the photo in Polish (e.g. "lewy górny", "środek", "całe zdjęcie").
 - confidence: "high" only when you can clearly read both name and number.
 Skip card backs, sleeves without visible text, and non-card objects. If nothing is readable, return an empty list.`;
 const SCAN_SCHEMA = { type: 'object', additionalProperties: false, required: ['cards'], properties: { cards: { type: 'array', items: { type: 'object', additionalProperties: false,
-  required: ['name', 'number', 'set_total', 'set_code', 'language', 'variant', 'position', 'confidence'],
+  required: ['name', 'number', 'set_total', 'set_code', 'language', 'name_en', 'attacks_en', 'variant', 'position', 'confidence'],
   properties: { name: { type: 'string' }, number: { type: 'string' }, set_total: { type: 'string' }, set_code: { type: 'string' },
+    name_en: { type: 'string' }, attacks_en: { type: 'array', items: { type: 'string' } },
     language: { type: 'string', enum: ['en', 'ja', 'other'] }, variant: { type: 'string', enum: ['normal', 'holo', 'reverse_holo', 'unknown'] },
     position: { type: 'string' }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] } } } } } };
 const SC = { jobs: [], cost: 0, date: todayISO(), busy: 0 };
@@ -806,12 +809,29 @@ function nameSim(a, b) {
 const JA_SCRIPT = /[぀-ヿ一-鿿]/;
 // Język wybieramy po piśmie nazwy, nie po ocenie modelu (odblask na toploaderze potrafi dać „ja” dla angielskiej karty).
 // Najpierw język zgodny z pismem, potem drugi.
-async function resolveCard(c) {
+// loose = numer wpisany ręcznie: ufamy numerowi, nazwa nie musi pasować (np. „mew 129/103” → japońska „ミュウex”)
+async function resolveCard(c, loose) {
   const order = JA_SCRIPT.test(c.name) ? ['ja', 'en'] : ['en', 'ja'];
-  for (const lang of order) { const r = await resolveIn(lang, c); if (r.length) return r; }
-  return [];
+  for (const lang of order) { const r = await resolveIn(lang, c, loose); if (r.some(x => x.idp)) return r.map(x => ({ ...x, lang })); }
+  return catalogMatch(c);
 }
-async function resolveIn(lang, c) {
+// numer tak, jak jest wydrukowany: 129/103, 037/XY-P, SWSH020
+const printedNo = c => [c.number, c.set_total || c.set_code].filter(Boolean).join('/');
+// Ostatnia deska ratunku (np. japońskie promo XY-P, których TCGdex nie ma): cennik Cardmarketu ma nazwy
+// „Darkrai [Hypnoblast | Deep Wind]” – szukamy po angielskiej nazwie i atakach odczytanych przez model.
+function catalogMatch(c) {
+  if (!S.catalog || !c.name_en) return [];
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const want = norm(c.name_en), atk = (c.attacks_en || []).map(norm).filter(Boolean);
+  // dodatki azjatyckie mają w katalogu nazwę japońską albo żadną – przy karcie JP stawiamy je wyżej, przy EN niżej
+  const asian = r => { const e = S.catalog.exp[r[3]]; return !e || JA_SCRIPT.test(e); };
+  const rows = S.catalog.p.filter(r => S.catalog.kinds[r[2]] === 'S' && norm(r[1].split(' [')[0]) === want).map(r => {
+    const has = norm((r[1].match(/\[(.*)\]/) || [])[1]);
+    return { r, hit: atk.filter(a => has.includes(a)).length, lang: asian(r) === (c.language === 'ja') ? 1 : 0 };
+  }).filter(x => !atk.length || x.hit > 0).sort((a, b) => b.hit - a.hit || b.lang - a.lang || (b.r[4] || 0) - (a.r[4] || 0)).slice(0, 12);
+  return rows.map(({ r }) => ({ tid: null, name: r[1], set: S.catalog.exp[r[3]] || `dodatek #${r[3]}`, no: printedNo(c), total: null, rarity: '', img: null, idp: r[0], lang: c.language, fromCatalog: true }));
+}
+async function resolveIn(lang, c, loose) {
   const sets = await td(`${lang}/sets`) || [], setById = new Map(sets.map(s => [s.id, s]));
   const no = normNo(c.number), tot = parseInt(c.set_total, 10) || null, setOf = id => id.slice(0, id.lastIndexOf('-'));
   const byName = async n => n ? await td(`${lang}/cards?name=${encodeURIComponent(n)}`) || [] : [];
@@ -823,7 +843,7 @@ async function resolveIn(lang, c) {
     for (const s of sets.filter(s => s.cardCount?.official === tot).slice(-6)) {
       const hit = (await td(`${lang}/sets/${encodeURIComponent(s.id)}`))?.cards?.find(x => normNo(x.localId) === no);
       // tylko gdy nazwa choć trochę pasuje (to samo pismo, ≥ 40% wspólnych par liter) – inaczej „Sylveon” trafiłby na „Charizard”
-      if (hit && JA_SCRIPT.test(hit.name) === JA_SCRIPT.test(c.name) && nameSim(hit.name, c.name) >= 0.4) cand.push(hit);
+      if (hit && (loose || (JA_SCRIPT.test(hit.name) === JA_SCRIPT.test(c.name) && nameSim(hit.name, c.name) >= 0.4))) cand.push(hit);
     }
   }
   const full = (await Promise.all(cand.slice(0, 8).map(b => td(`${lang}/cards/${encodeURIComponent(b.id)}`)))).filter(Boolean);
@@ -865,12 +885,24 @@ async function scanJob(j) {
     j.cards = await Promise.all((out.cards || []).map(async det => {
       const cands = await resolveCard(det);
       // Reverse Holo tylko, gdy Cardmarket ma dla tej karty osobną cenę RH (np. karty LEGEND/ex są holo, ale nie „reverse”)
-      return { det, cands, sel: cands.length ? 0 : -1, holo: det.variant === 'reverse_holo' && !!catRow(cands[0]?.idp)?.[9], qty: 1, cost: '', on: cands.length === 1 && !!cands[0].idp && det.confidence === 'high' };
+      return { det, cands, sel: cands.length ? 0 : -1, holo: det.variant === 'reverse_holo' && !!catRow(cands[0]?.idp)?.[9], qty: 1, cost: '', on: cands.length === 1 && !!cands[0].idp && det.confidence === 'high' && !cands[0].fromCatalog };
     }));
     j.status = 'gotowe';
+    liveDupScan();
   } catch (e) { j.status = 'błąd'; j.err = aiError(e); }
   scQueue();
   if (j.status === 'gotowe') savePhoto(j);
+}
+// Tryb ciągły: ta sama karta na dwóch kolejnych zdjęciach w ciągu 30 s to prawie na pewno podwójne zdjęcie –
+// późniejsze odznaczamy i oznaczamy „możliwy duplikat” (nie usuwamy – może to druga sztuka). Zdjęcia analizują się
+// równolegle, więc sprawdzamy całą kolejkę po każdym zakończeniu.
+function liveDupScan() {
+  const sig = jb => jb.cards.map(c => c.cands[c.sel]?.idp || `${c.det.name}|${c.det.number}`).join(',');
+  const live = SC.jobs.filter(x => x.live && x.status === 'gotowe' && x.cards.length).sort((a, b) => a.t - b.t);
+  for (let i = 1; i < live.length; i++) {
+    const a = live[i - 1], b = live[i];
+    if (!b.dup && b.t - a.t < 30e3 && sig(a) === sig(b)) { b.dup = true; b.cards.forEach(c => { c.on = false; }); }   // raz – potem decyduje użytkownik
+  }
 }
 async function savePhoto(j) {   // każde zrobione zdjęcie trafia do prywatnego repo, niezależnie od tego, co z niego dodasz
   if (S.readOnly || !GH.token || j.photo) return;
@@ -888,7 +920,8 @@ function scPump() {
   for (const j of SC.jobs) { if (SC.busy >= 2) break; if (j.status === 'czeka') { SC.busy++; scanJob(j).finally(() => { SC.busy--; scPump(); }); } }
 }
 function scAdd(files) {
-  for (const f of files) if (/^image\//.test(f.type) || /\.(heic|jpe?g|png|webp)$/i.test(f.name)) SC.jobs.push({ id: uid(), file: f, url: URL.createObjectURL(f), status: 'czeka', cards: [] });
+  for (const f of files) if (/^image\//.test(f.type) || /\.(heic|jpe?g|png|webp)$/i.test(f.name))
+    SC.jobs.push({ id: uid(), file: f, url: URL.createObjectURL(f), status: 'czeka', cards: [], t: Date.now(), live: f.name.startsWith('stojak-') });
   scQueue(); scPump();
 }
 const scSelected = () => SC.jobs.flatMap(j => j.cards.filter(c => c.on && c.cands[c.sel]).map(c => ({ j, c, card: c.cands[c.sel] })));
@@ -1041,13 +1074,14 @@ function scQueue() {
   ${SC.jobs.map(j => `<div class="job"><img src="${j.url}" alt="">
     <div style="min-width:0">
       <div class="spread"><div style="font-size:13px">${STAT[j.status] || (j.status === 'błąd' ? `<span class="down">${esc(j.err)}</span>` : `${j.cards.length ? `${j.cards.length} kart` : 'Nie znalazłem kart na zdjęciu.'}${j.cost ? ` · ${(j.cost * 100).toFixed(3).replace('.', ',')} ¢` : ''}`)}
-        ${j.photo ? ' · <span class="up">📁 zapisane</span>' : j.photoErr ? ` · <span class="down">${esc(j.photoErr)}</span>` : ''}</div>
+        ${j.photo ? ' · <span class="up">📁 zapisane</span>' : j.photoErr ? ` · <span class="down">${esc(j.photoErr)}</span>` : ''}${j.dup ? ' · <span class="badge warn"><span class="dot"></span>możliwy duplikat poprzedniego zdjęcia – odznaczone</span>' : ''}</div>
         <div class="row">${j.status === 'błąd' ? `<button class="btn sm" data-act="scRetry" data-j="${j.id}">Ponów</button>` : ''}${j.status === 'gotowe' && !j.photo && !S.readOnly ? `<button class="btn sm" data-act="scPhoto" data-j="${j.id}">Zapisz zdjęcie</button>` : ''}<button class="btn sm" data-act="scDrop" data-j="${j.id}" title="Usuń z kolejki">×</button></div></div>
       ${j.cards.map((c, i) => { const k = c.cands[c.sel], pr = scPrice(k, c.holo); return `<div class="sc-card">
         <input type="checkbox" data-j="${j.id}" data-c="${i}" data-f="on" ${c.on ? 'checked' : ''} ${k ? '' : 'disabled'} aria-label="Dodaj">
         ${k?.img ? `<img src="${esc(k.img)}" alt="" loading="lazy">` : '<span></span>'}
-        <div style="min-width:0"><div class="nm">${esc(k ? k.name : c.det.name || '?')} <span class="muted" style="font-weight:400">${esc(k ? `${k.no}/${k.total ?? '?'}` : `${c.det.number}/${c.det.set_total}`)}</span>
-          ${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
+        <div style="min-width:0"><div class="nm">${esc(k ? k.name : c.det.name || '?')} <span class="muted" style="font-weight:400">${esc(printedNo(c.det) || (k ? `${k.no}/${k.total ?? '?'}` : ''))}</span>
+          ${(k?.lang || c.det.language) === 'ja' ? '<span class="badge">JP</span>' : ''}${c.det.name_en && c.det.name_en !== (k?.name || c.det.name) && JA_SCRIPT.test(c.det.name) ? ` <span class="muted" style="font-weight:400">(${esc(c.det.name_en)})</span>` : ''}
+          ${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k?.fromCatalog ? '<span class="badge warn"><span class="dot"></span>z cennika CM po nazwie i atakach – wybierz wersję</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
           <small>${esc(k ? [k.set, k.rarity].filter(Boolean).join(' · ') : 'nie dopasowano – ' + [c.det.set_code, c.det.language].filter(Boolean).join(' '))} · ${esc(c.det.position)}${pr ? ` · trend <b>${E(pr)}</b>` : ''}${k?.idp ? ` · <a href="${cmLink(k.idp, k.name)}" target="_blank" rel="noopener">Cardmarket ↗</a>` : ''}</small></div></div>
         <div class="ctl">
           ${c.cands.length > 1 ? `<select data-j="${j.id}" data-c="${i}" data-f="sel" aria-label="Wariant">${c.cands.map((x, n) => `<option value="${n}" ${n === c.sel ? 'selected' : ''}>${esc(`${x.name} · ${x.set} ${x.no}`)}</option>`).join('')}<option value="-1" ${c.sel < 0 ? 'selected' : ''}>żadna z tych</option></select>` : ''}
@@ -1070,7 +1104,7 @@ async function scApprove() {
   const recs = sel.map(({ j, c, card }) => {
     const r = catRow(card.idp);
     return { uid: uid(), id: card.idp, holo: !!c.holo, name: r ? r[1] : card.name, set: (r && S.catalog.exp[r[3]]) || card.set, kind: 'S',
-      qty: c.qty, date: SC.date, cost_pln: +(+c.cost || 0).toFixed(2), note: `${card.set} ${card.no}`.trim(), sold: null, tcgdex: card.tid, ...(card.img ? { img: card.img } : {}), ...(j.photo ? { photos: [j.photo] } : {}) };
+      qty: c.qty, date: SC.date, cost_pln: +(+c.cost || 0).toFixed(2), note: '', no: printedNo(c.det) || [card.no, card.total].filter(Boolean).join('/'), lang: card.lang || c.det.language, sold: null, tcgdex: card.tid, ...(card.img ? { img: card.img } : {}), ...(j.photo ? { photos: [j.photo] } : {}) };
   });
   const scans = new Map();
   for (const { j } of sel) if (j.photo) scans.set(j.photo, { path: j.photo, date: todayISO(), n: j.cards.length });
@@ -1208,10 +1242,27 @@ function mountPicker(d, onPick) {
     if (!S.catalog) return;
     const q = $('#pk-q', d).value.trim(), res = $('#pk-res', d);
     if (q.length < 2) { res.innerHTML = '<p class="muted">Wpisz co najmniej 2 znaki.</p>'; return; }
-    const { rows, total } = searchCatalog(q, { kind, sort: 'price', limit: 40 });
-    res.innerHTML = `<table class="tbl"><tr><th>Produkt</th><th>Trend</th><th></th></tr>${rows.map(r => `<tr><td class="name"><div class="nm">${esc(r[1])}<small>${esc([S.catalog.exp[r[3]], KIND[S.catalog.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td>${E(r[4])}</td><td><button class="btn sm primary" data-pick="${r[0]}">Wybierz</button>${r[9] ? ` <button class="btn sm" data-pick="${r[0]}" data-holo="1" title="Wersja Reverse Holo">RH</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Nic nie znaleziono.</td></tr>'}</table>${total > rows.length ? `<p class="muted" style="font-size:12px">Pokazuję ${rows.length} z ${total} – doprecyzuj wyszukiwanie.</p>` : ''}`;
+    // numer karty w zapytaniu („darkrai 037/xy-p”, „mew 129/103”, „pikachu 30C023”): cennik CM nie zna numerów,
+    // więc numer sprawdzamy w TCGdex (EN i JA), a w cenniku szukamy po samej nazwie
+    const toks = q.split(/\s+/), numTok = toks.find(t => /\d/.test(t) && (/\//.test(t) || /^[a-z]{0,5}\d{1,4}[a-z]?$/i.test(t)));
+    const nameQ = toks.filter(t => t !== numTok).join(' ');
+    const row = r => `<tr><td class="name"><div class="nm">${esc(r[1])}<small>${esc([S.catalog.exp[r[3]] || `dodatek #${r[3]}`, KIND[S.catalog.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td>${E(r[4])}</td><td><button class="btn sm primary" data-pick="${r[0]}">Wybierz</button>${r[9] ? ` <button class="btn sm" data-pick="${r[0]}" data-holo="1" title="Wersja Reverse Holo">RH</button>` : ''}</td></tr>`;
+    const { rows, total } = searchCatalog(nameQ || q, { kind, sort: 'price', limit: 40 });
+    res.innerHTML = `${numTok && nameQ ? '<div id="pk-num"><p class="muted"><span class="spin"></span> Szukam numeru ' + esc(numTok.toUpperCase()) + '…</p></div>' : ''}
+      <table class="tbl"><tr><th>Produkt${numTok && nameQ ? ' (wszystkie wersje o tej nazwie)' : ''}</th><th>Trend</th><th></th></tr>${rows.map(row).join('') || '<tr><td colspan="3" class="empty">Nic nie znaleziono.</td></tr>'}</table>${total > rows.length ? `<p class="muted" style="font-size:12px">Pokazuję ${rows.length} z ${total} – doprecyzuj wyszukiwanie.</p>` : ''}`;
+    if (numTok && nameQ) {
+      const my = ++runId, [no, set = ''] = numTok.split('/');
+      resolveCard({ name: nameQ, name_en: nameQ, attacks_en: [], number: no, set_total: /^\d+$/.test(set) ? set : '', set_code: /^\d+$/.test(set) ? '' : set.toUpperCase(), language: JA_SCRIPT.test(nameQ) ? 'ja' : 'en' }, true).then(cands => {
+        const box = $('#pk-num', d); if (!box || my !== runId) return;
+        const exact = cands.filter(x => !x.fromCatalog && x.idp);
+        box.innerHTML = exact.length
+          ? `<h3 style="margin:4px 0 6px">Numer ${esc(numTok.toUpperCase())}</h3><table class="tbl">${exact.map(x => { const r = catRow(x.idp); return `<tr><td class="name"><div class="nm">${esc(x.name)} <span class="muted" style="font-weight:400">${esc(x.no)}${x.total ? '/' + x.total : ''}</span>${x.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}<small>${esc(x.set)}${r ? ' · ' + esc(r[1]) : ''}</small></div></td><td>${E(r?.[4])}</td><td><button class="btn sm primary" data-pick="${x.idp}">Wybierz</button></td></tr>`; }).join('')}</table>`
+          : `<p class="muted" style="font-size:12px">Numeru ${esc(numTok.toUpperCase())} nie ma w bazie TCGdex (np. japońskie promo). Wybierz z listy poniżej – Cardmarket nazywa karty „Nazwa [Atak 1 | Atak 2]”, dodatek bez nazwy to zwykle wydanie azjatyckie.</p>`;
+      });
+    }
   };
-  $('#pk-q', d).addEventListener('input', run);
+  let runId = 0, tmr;
+  $('#pk-q', d).addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(run, 250); });
   $('#pk-k', d).addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (!b) return; kind = b.dataset.k; $('#pk-k', d).querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c === b)); run(); });
   $('#pk-res', d).addEventListener('click', e => { const b = e.target.closest('[data-pick]'); if (b) onPick({ id: +b.dataset.pick, holo: !!b.dataset.holo }); });
   loadCatalog().then(() => { run(); $('#pk-q', d).focus(); }).catch(e => { $('#pk-res', d).textContent = e.message; });
@@ -1414,7 +1465,7 @@ const ACT = {
     const j = SC.jobs.find(x => x.id === a.dataset.j), c = j?.cards[+a.dataset.c]; if (!c) return;
     modal('Wybierz kartę ręcznie', pickerHTML(), d => {
       mountPicker(d, it => { const r = catRow(it.id); c.cands = [{ tid: null, name: r?.[1] || `#${it.id}`, set: S.catalog.exp[r?.[3]] || '', no: c.det.number, total: c.det.set_total, rarity: '', img: null, idp: it.id }]; c.sel = 0; c.holo = it.holo; c.on = true; d.close(); scQueue(); });
-      $('#pk-q', d).value = c.det.name;
+      $('#pk-q', d).value = `${c.det.name_en || c.det.name} ${printedNo(c.det)}`.trim();   // angielska nazwa + numer z karty
     });
   },
   photo: a => openPhotos([a.dataset.path]),
