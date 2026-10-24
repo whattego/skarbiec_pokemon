@@ -250,9 +250,10 @@ const PHOTOS = {
       }
     });
   },
-  urls: new Map(),
+  urls: new Map(), miss: new Map(),
   url(path) {   // blob: URL do wyświetlenia (repo jest prywatne, więc przez API z tokenem)
-    if (!this.urls.has(path)) this.urls.set(path, GH.call(`/contents/${path.split('/').map(encodeURIComponent).join('/')}`, { raw: true }, this.repo).then(b => URL.createObjectURL(b)).catch(e => { this.urls.delete(path); throw e; }));
+    if (Date.now() - (this.miss.get(path) || 0) < 300e3) return Promise.reject(new Error('brak pliku'));   // brak – nie pytaj co chwilę
+    if (!this.urls.has(path)) this.urls.set(path, GH.call(`/contents/${path.split('/').map(encodeURIComponent).join('/')}`, { raw: true }, this.repo).then(b => URL.createObjectURL(b)).catch(e => { this.urls.delete(path); this.miss.set(path, Date.now()); throw e; }));
     return this.urls.get(path);
   },
 };
@@ -369,8 +370,10 @@ async function itemImgSrc(key) {
   const all = [...(S.vault?.watchlists || []).flatMap(w => w.items || []), ...(S.vault?.portfolio || [])].filter(x => keyOf(x) === key);
   const direct = all.find(x => x.img)?.img;
   if (direct) return direct;
-  const repoPath = S.en?.get(key)?.img || S.en?.get(key.replace(/h$/, ''))?.img || all.find(x => x.photos?.length)?.photos[0];
-  return repoPath ? PHOTOS.url(repoPath) : null;
+  // zdjęcie z Cardmarketu (img/<idProduct>.jpg kopiuje rozszerzenie) – także, gdy cen EN/NM dla tej karty jeszcze nie ma
+  const cmPath = S.en?.get(key)?.img || S.en?.get(key.replace(/h$/, ''))?.img || `img/${parseInt(key, 10)}.jpg`;
+  const own = all.find(x => x.photos?.length)?.photos[0];
+  return PHOTOS.url(cmPath).catch(() => own ? PHOTOS.url(own) : null);
 }
 let pimgEl = null, pimgKey = null;
 document.addEventListener('mouseover', async e => {
@@ -1157,7 +1160,7 @@ function scQueue() {
         <div class="row">${j.status === 'błąd' ? `<button class="btn sm" data-act="scRetry" data-j="${j.id}">Ponów</button>` : ''}${j.status === 'gotowe' && !j.photo && !S.readOnly ? `<button class="btn sm" data-act="scPhoto" data-j="${j.id}">Zapisz zdjęcie</button>` : ''}<button class="btn sm" data-act="scDrop" data-j="${j.id}" title="Usuń z kolejki">×</button></div></div>
       ${j.cards.map((c, i) => { const k = c.cands[c.sel], pr = scPrice(k, c.holo); return `<div class="sc-card">
         <input type="checkbox" data-j="${j.id}" data-c="${i}" data-f="on" ${c.on ? 'checked' : ''} ${k ? '' : 'disabled'} aria-label="Dodaj">
-        ${k?.img ? `<img src="${esc(k.img)}" alt="" loading="lazy">` : '<span></span>'}
+        ${k?.img ? `<img src="${esc(k.img)}" alt="" loading="lazy">` : k?.idp ? `<img data-cmimg="${k.idp}" src="${j.url}" alt="" title="Twoje zdjęcie – zdjęcie z Cardmarketu pojawi się po sprawdzeniu cen przez rozszerzenie">` : '<span></span>'}
         <div style="min-width:0"><div class="nm">${esc(k ? k.name : c.det.name || '?')} <span class="muted" style="font-weight:400">${esc(printedNo(c.det) || (k ? `${k.no}/${k.total ?? '?'}` : ''))}</span>
           ${(k?.lang || c.det.language) === 'ja' ? '<span class="badge">JP</span>' : ''}${c.det.name_en && c.det.name_en !== (k?.name || c.det.name) && JA_SCRIPT.test(c.det.name) ? ` <span class="muted" style="font-weight:400">(${esc(c.det.name_en)})</span>` : ''}
           ${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k?.exact ? `<span class="badge good" title="Kod i numer z karty zgadzają się z tytułem produktu na Cardmarkecie"><span class="dot"></span>✓ ${esc(k.cmCode)}</span>` : k?.verify ? '<span class="badge warn" title="Rozszerzenie Chrome sprawdzi numer na Cardmarkecie i samo poprawi wersję w portfelu"><span class="dot"></span>do weryfikacji</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
@@ -1170,6 +1173,8 @@ function scQueue() {
           ${!k ? `<button class="btn sm" data-act="scManual" data-j="${j.id}" data-c="${i}">Wybierz ręcznie</button>` : ''}
         </div></div>`; }).join('')}
     </div></div>`).join('')}`;
+  // karty spoza TCGdex: zdjęcie z Cardmarketu, jeśli rozszerzenie już je skopiowało (inaczej zostaje twoje zdjęcie)
+  for (const im of q.querySelectorAll('img[data-cmimg]')) PHOTOS.url(`img/${im.dataset.cmimg}.jpg`).then(u => { im.src = u; im.title = ''; }).catch(() => {});
 }
 async function scGallery() {
   const g = $('#sc-gal'); if (!g) return;
