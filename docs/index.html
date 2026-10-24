@@ -494,6 +494,7 @@ function render() {
   const v = $('#view'); if (!v) return;
   document.querySelectorAll('nav.tabs button').forEach(b => b.dataset.id === S.tab ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'));
   ({ pulpit: vPulpit, watch: vWatch, portfel: vPortfel, skaner: vSkaner, rynek: vRynek, alerty: vAlerty, ustawienia: vUstawienia })[S.tab](v);
+  toHash();
 }
 
 // ---------- Pulpit ----------
@@ -1414,7 +1415,19 @@ async function unlock(pw, remember) {
   loadCatalog().catch(() => {}).then(syncTargets);
 }
 
+// zakładka w adresie (#watch, #portfel, #watch/<idListy>…): odświeżenie zostawia cię w tym samym miejscu, działa „Wstecz”
+function fromHash() {
+  const [t, w] = location.hash.slice(1).split('/');
+  if (TABS.some(([id]) => id === t)) { S.tab = t; if (w) S.wl = decodeURIComponent(w); }
+}
+function toHash() {
+  const want = '#' + S.tab + (S.tab === 'watch' && S.wl ? '/' + encodeURIComponent(S.wl) : '');
+  if (location.hash !== want) history.pushState(null, '', location.pathname + location.search + want);
+}
+window.addEventListener('popstate', () => { fromHash(); if (S.vault) render(); });
+
 (async function start() {
+  fromHash();
   const th = ls.get('skarbiec_theme'); if (th) document.documentElement.dataset.theme = th;
   $('#app').innerHTML = '<div class="login"><span class="spin"></span></div>';
   try {
