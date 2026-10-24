@@ -2329,7 +2329,7 @@ function nmMissing() {
   const rows = holdingsCalc().active.filter(r => !isBulk(r) && nmWhy(r));
   modal(`Bez ceny NM: ${rows.length} pozycji`, `<p class="muted" style="margin-top:0;font-size:13px">Te pozycje są w kafelku liczone wg średniej z cennika Cardmarketu.</p>
     <table class="tbl">${rows.map(r => `<tr><td class="name"><div class="nm">${esc(r.m.name)}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}<small>${esc(r.m.set || '')}</small></div></td><td style="font-size:13px">${esc(nmWhy(r))}</td><td>${P(r.value)}</td></tr>`).join('')}</table>
-    <div class="row" style="margin-top:12px">${S.readOnly ? '' : `<button class="btn primary" data-act="enRefresh" data-scope="p" data-close>${enScript() ? 'Sprawdź teraz' : 'Zleć komputerowi'}</button>`}<button class="btn" data-close>Zamknij</button></div>`);
+    <div class="row" style="margin-top:12px">${S.readOnly ? '' : (() => { const keys = [...new Set(rows.filter(r => !(r.graded || r.h.grade?.by)).map(r => keyOf(r.h)))]; return keys.length ? `<button class="btn primary" data-act="enRefresh" data-scope="i:${keys.join(',')}" data-close title="Sprawdzi tylko te ${keys.length} pozycji">${enScript() ? `Sprawdź teraz te ${keys.length}` : 'Zleć komputerowi'}</button>` : ''; })()}<button class="btn" data-close>Zamknij</button></div>`);
 }
 function verBadge(id) {
   const sib = siblingVersions(id); if (sib.length < 2) return '';
