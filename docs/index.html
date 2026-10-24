@@ -334,7 +334,11 @@ function enLiveRefresh() {
   setInterval(enLiveTick, 180e3);
   document.addEventListener('visibilitychange', enLiveTick);
   // rozszerzenie daje znać od razu po zapisie (zdarzenie z en.js) – chwila na GitHub, potem przeładowanie bez czekania na 3 min
-  let deb; document.addEventListener('skarbiec-data', () => { clearTimeout(deb); deb = setTimeout(() => { _enLiveT = 0; enLiveTick(); }, 3000); });   // kilka zapisów naraz = jedno przeładowanie
+  let deb; document.addEventListener('skarbiec-data', () => { clearTimeout(deb); deb = setTimeout(() => {
+    // zapis z optymalizatora po kliknięciu „Uaktualnij” → komunikat „liczy w tle” zamienia się na gotowe
+    if (S.enStatus?.state === 'queued' && /^optymalizator/.test(S.enStatus.text || '')) S.enStatus = { state: 'ok', text: `✓ komplet przeliczony o ${new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}`, t: Date.now() };
+    _enLiveT = 0; enLiveTick(); if (S.tab === 'watch') render();
+  }, 3000); });   // kilka zapisów naraz = jedno przeładowanie
 }
 const enOf = it => S.en?.get(keyOf(it)) || null;
 // lista kart dla skryptu Tampermonkey „Skarbiec – ceny EN/NM” (watchlisty + nie sprzedany portfel); jawna, ale w prywatnym repo
@@ -2577,7 +2581,8 @@ const ACT = {
       // sprawdzanie cen tych samych kart (druga karta Cardmarketu) jest zbędne
       const curWl = (S.vault.watchlists || []).find(w => w.id === S.wl);
       if (scope === 'w' && komplet && curWl?.metric === 'komplet') {
-        S.enStatus = { state: 'run', text: 'optymalizator liczy komplet i ceny kart w tle…', t: Date.now() }; render();
+        // stan „queued” – bez strażnika 60 s (optymalizator nie raportuje postępu jak sprawdzanie cen; jego karta zamyka się sama po liczeniu)
+        S.enStatus = { state: 'queued', text: 'optymalizator liczy komplet i ceny kart w tle (karta Cardmarketu zamknie się sama) – wynik pojawi się na wykresie za 1–3 min.', t: Date.now() }; render();
         document.dispatchEvent(new Event('skarbiec-komplet-run')); return;
       }
       document.documentElement.dataset.skarbiecEnScope = scope;   // en.js przekaże zakres rozszerzeniu
