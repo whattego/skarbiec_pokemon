@@ -2123,6 +2123,7 @@ function formHolding(base, existing) {
   modal(existing ? 'Edytuj pozycję' : 'Dodaj do portfela', `<p style="margin-top:0"><b>${esc(m.name)}</b><br><span class="muted">${esc(m.set)} · trend ${E(p?.trend)} (≈ ${P(p?.trend * fxNow())})</span></p>
     <div class="grid g2" style="gap:10px">
       <label class="f">Ilość<input type="number" id="h-q" value="${existing?.qty || 1}" min="1"></label>
+      <label class="row" style="grid-column:1/-1;gap:8px"><input type="checkbox" id="h-holo" ${it.holo ? 'checked' : ''}> Reverse Holo <span class="muted" style="font-size:12px">${catRow(it.id)?.[9] ? `cena RH: ${E(catRow(it.id)[9])} (zwykła ${E(catRow(it.id)[4])})` : 'Cardmarket nie podaje osobnej ceny RH dla tej karty – zostanie cena zwykłej wersji'}</span></label>
       <label class="f">Data zakupu<input type="date" id="h-d" value="${existing?.date || todayISO()}" max="${todayISO()}"></label>
       <label class="f">Łączny koszt zakupu (z wysyłką)<input type="number" id="h-c" step="0.01" min="0" value="${curCost}"></label>
       <label class="f">Waluta<select id="h-cur"><option value="PLN">PLN</option><option value="EUR">EUR (przeliczę po kursie ${fxNow().toFixed(4).replace('.', ',')})</option></select></label>
@@ -2139,7 +2140,7 @@ function formHolding(base, existing) {
       let cost = parseFloat($('#h-c', d).value); if (!(cost >= 0)) return toast('Podaj koszt zakupu.');
       if ($('#h-cur', d).value === 'EUR') cost = +(cost * fxNow()).toFixed(2);
       const rec = existing || { uid: uid(), id: it.id, holo: !!it.holo, ...snapshotMeta(it), sold: null };
-      Object.assign(rec, { qty: Math.max(1, +$('#h-q', d).value || 1), date: $('#h-d', d).value || null, cost_pln: cost, note: $('#h-n', d).value.trim() });
+      Object.assign(rec, { qty: Math.max(1, +$('#h-q', d).value || 1), date: $('#h-d', d).value || null, cost_pln: cost, note: $('#h-n', d).value.trim(), holo: $('#h-holo', d).checked });
       const ver = $('#h-ver', d);
       if (ver && +ver.value !== rec.id) {   // wybrana ręcznie wersja = zweryfikowana
         const r = catRow(+ver.value);
