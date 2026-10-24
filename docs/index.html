@@ -1122,12 +1122,13 @@ function vPortfel(v) {
   <div class="card" style="margin-top:12px"><h2>Wartość w czasie</h2>
     ${(S.market?.pv || []).length >= 2 ? legend([['Wartość', css('--s1')], ['Koszt zakupu', css('--muted'), true]]) + '<div class="chart"><canvas id="c-pf"></canvas></div>' : '<div class="banner">📈 Wykres pojawi się po dwóch dniach pomiarów bota.</div>'}</div>
   <div class="card" style="margin-top:12px"><div class="spread"><h2 style="margin:0">Pozycje</h2>
-    <label class="row" style="font-size:13px">Dodatki <select id="pf-sort"><option value="name" ${pfSort() === 'name' ? 'selected' : ''}>alfabetycznie</option><option value="value" ${pfSort() === 'value' ? 'selected' : ''}>wg wartości</option><option value="date" ${pfSort() === 'date' ? 'selected' : ''}>od najnowszych</option></select></label></div>
+    <div class="row">${!S.readOnly && dupGroups().length ? `<button class="btn sm" data-act="pfmerge" title="Te same karty (ta sama wersja, RH, miesiąc zakupu) jako jedna pozycja z sumą sztuk i kosztów">🔗 Scal duplikaty (${dupGroups().reduce((a, g) => a + g.length - 1, 0)})</button>` : ''}
+    <label class="row" style="font-size:13px">Dodatki <select id="pf-sort"><option value="name" ${pfSort() === 'name' ? 'selected' : ''}>alfabetycznie</option><option value="value" ${pfSort() === 'value' ? 'selected' : ''}>wg wartości</option><option value="date" ${pfSort() === 'date' ? 'selected' : ''}>od najnowszych</option></select></label></div></div>
     <div class="tblw" style="margin-top:8px"><table class="tbl">
     <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Najtaniej EN/NM / szt.</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
     ${pfGroups(pf.active).map(g => `<tr class="grp click" data-act="pfgrp" data-set="${esc(g.bulk ? '+bulk' : g.set)}"><td colspan="9"><span class="muted">${g.open ? '▾' : '▸'}</span> <b>${esc(g.set)}</b>${g.lang ? ' <span class="badge">JP</span>' : ''}
       <span class="muted">· ${[g.n ? `${g.n} ${plKart(g.n)}` : '', g.ns ? `${g.ns} szt. sealed` : ''].filter(Boolean).join(' + ')} · </span>${P(g.value)}${g.cost ? ` <span class="${cls(pct(g.value, g.cost))}">${PC(pct(g.value, g.cost))}</span>` : ''}${g.bulk && !S.readOnly && g.rows.some(r => r.h.photos?.length || r.h.crop) ? ` <button class="btn sm" data-act="bulkphotos" style="margin-left:8px">🧹 Usuń moje zdjęcia bulk</button>` : ''}</td></tr>` + (g.open ? g.rows.map(r => `<tr>
-      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${r.h.no && !S.cmnums?.[r.h.id] ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}${r.h.grade?.by ? ` <span class="badge good" title="${esc(r.h.grade.cert ? 'certyfikat ' + r.h.grade.cert : 'karta oceniona')}">${esc(gradeLbl(r.h))}</span>` : ''}${{ listed: ` <span class="badge good" title="${esc(sellTip(r.h))}">CM ${E(S.listed?.[r.h.uid]?.price)}${S.listed?.[r.h.uid]?.miss ? ' ?' : ''}</span>`, wait: ' <span class="badge" title="Rozszerzenie wystawi ją przy najbliższym przebiegu">na sprzedaż – czeka</span>', err: ` <span class="badge warn" title="${esc(S.listed?.[r.h.uid]?.err || '')}"><span class="dot"></span>wystawienie nie wyszło</span>` }[sellState(r.h)] || ''}${r.h.verify ? ' <span class="badge warn" title="Wersję (dodatek) poprawi rozszerzenie po sprawdzeniu numeru na Cardmarkecie"><span class="dot"></span>do weryfikacji</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set ? '' : KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : !S.readOnly && !isBulk(r) ? `<button class="btn sm" data-act="holdphotoadd" data-uid="${r.h.uid}" title="Dodaj własne zdjęcie tej karty (np. gdy podrożała ponad próg bulk)" style="margin-top:4px">📷 +</button>` : ''}</td>
+      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${verBadge(r.h.id)}${r.h.no && !S.cmnums?.[r.h.id] ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}${r.h.grade?.by ? ` <span class="badge good" title="${esc(r.h.grade.cert ? 'certyfikat ' + r.h.grade.cert : 'karta oceniona')}">${esc(gradeLbl(r.h))}</span>` : ''}${{ listed: ` <span class="badge good" title="${esc(sellTip(r.h))}">CM ${E(S.listed?.[r.h.uid]?.price)}${S.listed?.[r.h.uid]?.miss ? ' ?' : ''}</span>`, wait: ' <span class="badge" title="Rozszerzenie wystawi ją przy najbliższym przebiegu">na sprzedaż – czeka</span>', err: ` <span class="badge warn" title="${esc(S.listed?.[r.h.uid]?.err || '')}"><span class="dot"></span>wystawienie nie wyszło</span>` }[sellState(r.h)] || ''}${r.h.verify ? ' <span class="badge warn" title="Wersję (dodatek) poprawi rozszerzenie po sprawdzeniu numeru na Cardmarkecie"><span class="dot"></span>do weryfikacji</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set ? '' : KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : !S.readOnly && !isBulk(r) ? `<button class="btn sm" data-act="holdphotoadd" data-uid="${r.h.uid}" title="Dodaj własne zdjęcie tej karty (np. gdy podrożała ponad próg bulk)" style="margin-top:4px">📷 +</button>` : ''}</td>
       <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.h.grade?.by ? `<br><small class="${gradeDue(r.h) ? 'down' : 'muted'}">${r.graded ? `wycena ręczna ${dPL(r.h.grade.t)}${gradeDue(r.h) ? ' · do aktualizacji' : ''}` : 'wpisz wycenę slabu'}</small>${r.graded && r.raw != null ? `<br><small class="muted" title="Cena karty bez gradingu (${PF_METRICS[pfMetric()][0]})">bez gradingu ${P(r.raw)}</small>` : ''}` : r.unsure ? '<br><small class="muted" title="Wersja karty jeszcze niepewna – liczę najniższą cenę spośród możliwych wersji">minimum · do weryfikacji</small>' : r.fb ? '<br><small class="muted" title="Cardmarket nie podaje dla tej pozycji wybranej średniej">wg trendu</small>' : r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
       <td>${enOf(r.h)?.min != null ? `${E(enOf(r.h).min)}<br><small class="muted">≈ ${P(enOf(r.h).min * fxNow())}</small>` : '<span class="muted">—</span>'}</td>
       <td class="${cls(r.plp)}">${r.pl != null ? `${r.pl >= 0 ? '+' : '−'}${P(Math.abs(r.pl))}<br><small>${PC(r.plp)}</small>` : '—'}</td>
@@ -2241,6 +2242,47 @@ function formAddWatch(it) {
 
 // inne wersje tej samej karty w tym samym dodatku – CM trzyma np. holo z McDonald's jako osobny produkt o tej samej nazwie
 // (Bulbasaur MCD25 1: zwykły 0,70 €, holo 3,83 €), a nie jako Reverse Holo
+// kilka produktów CM o tej samej nazwie w dodatku (McDonald's: zwykła i holo) – znaczek, żeby pozycje się nie myliły;
+// najdroższa = zwykle holo/foil (Bulbasaur MCD25 1: 538778 zwykła, 538783 holo)
+function verBadge(id) {
+  const sib = siblingVersions(id); if (sib.length < 2) return '';
+  const top = sib.at(-1)[0], i = sib.findIndex(r => r[0] === id);
+  const lbl = sib.length === 2 ? (id === top ? 'holo' : 'zwykła') : `wersja ${i + 1}/${sib.length}${id === top ? ' · holo?' : ''}`;
+  return ` <span class="badge${id === top ? ' good' : ''}" title="Cardmarket ma ${sib.length} produkty o tej nazwie w tym dodatku; zmiana w ✎ → „Wersja karty”">${lbl}</span>`;
+}
+// duplikaty w portfelu: ta sama wersja (idProduct), RH, język i miesiąc zakupu (PIT liczony od końca miesiąca), bez sprzedaży,
+// gradingu, weryfikacji i wystawienia na Cardmarket
+function dupGroups() {
+  const m = new Map();
+  for (const h of S.vault?.portfolio || []) {
+    if (h.sold || h.grade?.by || h.verify || h.sell?.on || S.listed?.[h.uid]) continue;
+    const k = `${h.id}|${h.holo ? 1 : 0}|${h.lang || ''}|${(h.date || '').slice(0, 7)}`;
+    if (!m.has(k)) m.set(k, []); m.get(k).push(h);
+  }
+  return [...m.values()].filter(g => g.length > 1);
+}
+async function mergeDupes() {
+  const gs = dupGroups(); if (!gs.length) return;
+  const n = gs.reduce((a, g) => a + g.length, 0);
+  if (!confirm(`Scalić ${n} pozycji w ${gs.length}? Ilości, koszty, zdjęcia i notatki zostaną zsumowane w jednej pozycji na kartę.`)) return;
+  const drop = new Set();
+  for (const g of gs) {
+    g.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const [base, ...rest] = g;
+    for (const h of rest) {
+      base.qty = (base.qty || 1) + (h.qty || 1);
+      base.cost_pln = +((+base.cost_pln || 0) + (+h.cost_pln || 0)).toFixed(2);
+      base.photos = [...new Set([...(base.photos || []), ...(h.photos || [])])];
+      if (!base.crop && h.crop) base.crop = h.crop;
+      if (h.note && !(base.note || '').includes(h.note)) base.note = [base.note, h.note].filter(Boolean).join(' · ');
+      drop.add(h.uid);
+    }
+    if (!base.photos.length) delete base.photos;
+  }
+  S.vault.portfolio = S.vault.portfolio.filter(h => !drop.has(h.uid));
+  if (await saveVault(`portfel: scalone duplikaty (${drop.size})`)) toast(`Scalono: ${n} pozycji → ${gs.length}.`, 4000);
+  render();
+}
 function siblingVersions(id) {
   const r0 = catRow(id); if (!r0 || !S.catalog) return [];
   const nm = baseName(r0[1]).toLowerCase();
@@ -2386,6 +2428,7 @@ const ACT = {
   detail: a => openDetail(+a.dataset.id, !!a.dataset.holo),
   addto: a => modal(a.dataset.mode === 'portfel' ? 'Dodaj do portfela' : 'Dodaj do watchlisty', pickerHTML(), d => mountPicker(d, it => { d.close(); a.dataset.mode === 'portfel' ? formHolding(it) : formAddWatch(it); })),
   sell: a => formSell(S.vault.portfolio.find(x => x.uid === a.dataset.uid)),
+  pfmerge: () => mergeDupes(),
   edithold: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); formHolding(h, h); },
   rkind: a => { R.kind = a.dataset.k; document.querySelectorAll('[data-act="rkind"]').forEach(c => c.setAttribute('aria-pressed', c === a)); rynekResults(); },
   savegh: async () => {
