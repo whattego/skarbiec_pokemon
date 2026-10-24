@@ -452,7 +452,7 @@ async function syncTargets() {
   if (S.readOnly || !GH.token || !PHOTOS.repo) return;
   await syncSell();
   const seen = new Map();
-  for (const it of [...(S.vault.watchlists || []).flatMap(w => w.items || []), ...(S.vault.portfolio || []).filter(h => !h.sold)])
+  for (const it of [...(S.vault.watchlists || []).flatMap(w => w.items || []), ...(S.vault.portfolio || []).filter(h => !h.sold), ...marketWatch()])
     if (+it.id > 0 && !seen.has(keyOf(it))) seen.set(keyOf(it), { id: +it.id, holo: !!it.holo, name: itemMeta(it).name });
   // progi list „komplet z wysyłką” – rozszerzenie dopasowuje je do Wants Listy po składzie (idProduct) i używa do auto-koszyka
   const lists = (S.vault.watchlists || []).filter(w => w.metric === 'komplet' && w.target_eur)
@@ -1053,7 +1053,49 @@ function vPortfel(v) {
 }
 
 // ---------- Rynek ----------
-const R = { q: '', kind: 'sealed', min: 20, sort: 'up' };
+const R = { q: '', kind: 'sealed', min: 20, sort: 'up', clean: true };
+// Cennik CM liczy trend i średnie ze sprzedaży WE WSZYSTKICH językach – tanie DE/FR/IT/ES/JP potrafią „zrobić” −90%,
+// choć karty EN trzymają cenę. Dlatego: (1) filtr szumu – ruch musi potwierdzać średnia 7 dni, (2) „Sprawdź EN/NM” – rozszerzenie
+// pobiera prawdziwą najtańszą ofertę EN/NM (vault.market_watch → en/targets.json, wynik w S.en jak dla watchlist; 14 dni, maks. 40).
+const MW_DAYS = 14, MW_MAX = 40;
+const marketWatch = () => (S.vault?.market_watch || []).filter(x => Date.now() - x.t < MW_DAYS * 864e5);
+async function marketCheck(ids) {   // dopisz do listy sprawdzania EN/NM i od razu poproś rozszerzenie (albo komputer) o przebieg
+  const cur = marketWatch().filter(x => !ids.includes(+x.id));
+  S.vault.market_watch = [...ids.map(id => ({ id: +id, holo: false, t: Date.now() })), ...cur].slice(0, MW_MAX);
+  rynekResults();
+  if (!await saveVault(`rynek: sprawdź EN/NM (${ids.length})`)) return;
+  await syncTargets();
+  if (document.documentElement.dataset.skarbiecEnExt) { document.dispatchEvent(new Event('skarbiec-en-run')); toast(`Rozszerzenie sprawdza ${ids.length} pozycji (ok. 3 s na kartę) – wynik pojawi się tutaj sam.`, 5000); }
+  else if (await requestDesktop('en')) toast('Zlecone komputerowi – wynik w ciągu kilku minut (Chrome z rozszerzeniem musi być włączony).', 5000);
+}
+// sealed: cennik CM nie podaje średnich – porównujemy trend z dziennym zrzutem bota (snap/) sprzed ~7 dni (najstarszy, jeśli młodszy)
+const SNAP = { day: null, map: null, loading: null };
+function loadSnapRef() {
+  if (SNAP.loading) return SNAP.loading;
+  return SNAP.loading = (async () => {
+    const days = (await fetchPublic('snap/index.json').catch(() => null)) || [];
+    const want = addDays(todayISO(), -7), cand = days.filter(d => d <= want).at(-1) || days[0];
+    if (!cand || cand >= todayISO()) return;
+    SNAP.map = await fetchPublic(`snap/${cand}.json`).catch(() => null); SNAP.day = SNAP.map ? cand : null;
+  })();
+}
+function moveOf(r) {   // ruch vs średnia 30 dni + czy wygląda na prawdziwy
+  if (r[8] == null && r[7] == null) {   // brak średnich (sealed) → zmiana vs zrzut sprzed ~tygodnia
+    const old = SNAP.map?.[r[0]];
+    return { ch: old ? pct(r[4], old) : null, ch7: null, real: !!old, snap: SNAP.day };
+  }
+  const ch = pct(r[4], r[8]), ch7 = pct(r[7], r[8]);
+  // prawdziwy ruch: średnia 7 dni idzie w tę samą stronę (co najmniej połowę) i trend nie odjechał od niej ponad 2× (zapaść trendu przez tanie egzemplarze w innych językach)
+  const real = ch != null && ch7 != null && Math.sign(ch) === Math.sign(ch7) && Math.abs(ch7) >= Math.abs(ch) / 2 && r[4] >= r[7] / 2 && r[4] <= r[7] * 2;
+  return { ch, ch7, real };
+}
+function enVerdict(r) {   // porównanie najtańszej oferty EN/NM z cennikiem (wszystkie języki)
+  const en = S.en?.get(String(r[0])); if (en?.min == null) return null;
+  const ref = Math.min(...[r[7], r[8]].filter(x => x > 0)) || r[4];   // niższa ze średnich 7/30 dni (wszystkie języki)
+  if (ref && en.min <= ref * 0.9) return { cls: 'good', txt: 'okazja EN', en };
+  if (r[4] && en.min >= r[4] * 1.5) return { cls: 'warn', txt: 'EN trzyma cenę', en };
+  return { cls: '', txt: 'EN ≈ rynek', en };
+}
 function vRynek(v) {
   v.innerHTML = `
   <h1>Rynek</h1><p class="sub">Wszystkie karty i sealed Pokémon z cennika Cardmarketu. Szukaj po nazwie albo przeglądaj największe ruchy.</p>
@@ -1062,7 +1104,9 @@ function vRynek(v) {
       <input type="search" id="rq" placeholder="Szukaj: np. Charizard, Ascended Heroes, Elite Trainer…" value="${esc(R.q)}" style="flex:1;min-width:200px">
       <select id="rsort" aria-label="Sortowanie"><option value="up">Największe wzrosty (vs 30 dni)</option><option value="down">Największe spadki (vs 30 dni)</option><option value="price">Najdroższe</option><option value="name">Nazwa</option></select>
       <label class="row muted" style="font-size:13px">od <input type="number" id="rmin" value="${R.min}" min="0" step="1" style="width:80px"> €</label>
+      <label class="row muted" style="font-size:13px" title="Ruch musi potwierdzać średnia z 7 dni – odpada jednorazowa tania sprzedaż"><input type="checkbox" id="rclean" ${R.clean ? 'checked' : ''}> ukryj podejrzane ruchy</label>
     </div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Ceny z cennika Cardmarketu są liczone ze sprzedaży we wszystkich językach – spadek może dotyczyć tylko np. niemieckich kart. Kliknij <b>EN/NM</b> przy pozycji (albo „Sprawdź EN/NM 20 pierwszych”), a rozszerzenie sprawdzi prawdziwą najtańszą ofertę po angielsku w stanie NM.</p>
     <div class="chips" style="margin-top:10px">${[['all', 'Wszystko'], ['sealed', 'Sealed'], ['S', 'Karty'], ['D', 'Displaye'], ['E', 'ETB'], ['B', 'Boostery']].map(([k, l]) => `<button class="chip" data-act="rkind" data-k="${k}" aria-pressed="${R.kind === k}">${l}</button>`).join('')}</div>
   </div>
   <div class="card" style="margin-top:12px" id="rres"><span class="spin"></span> Ładuję katalog (kilka MB, tylko za pierwszym razem)…</div>`;
@@ -1071,26 +1115,32 @@ function vRynek(v) {
   $('#rq').addEventListener('input', e => { R.q = e.target.value; go(); });
   $('#rmin').addEventListener('input', e => { R.min = +e.target.value || 0; go(); });
   $('#rsort').addEventListener('change', e => { R.sort = e.target.value; go(); });
+  $('#rclean').addEventListener('change', e => { R.clean = e.target.checked; go(); });
   loadCatalog().then(rynekResults).catch(e => { $('#rres').textContent = e.message; });
 }
-function searchCatalog(q, { kind = 'all', min = 0, sort = 'price', limit = 100 } = {}) {
+function searchCatalog(q, { kind = 'all', min = 0, sort = 'price', limit = 100, clean = false } = {}) {
   const c = S.catalog, toks = q.toLowerCase().split(/\s+/).filter(Boolean);
   let rows = c.p.filter(r => {
     const k = c.kinds[r[2]];
     if (kind === 'sealed' ? k === 'S' : kind !== 'all' && k !== kind) return false;
     if ((r[4] || 0) < min) return false;
+    if (clean && (sort === 'up' || sort === 'down') && !moveOf(r).real) return false;
     return toks.every(t => r.lc.includes(t));
   });
-  const ch = r => pct(r[4], r[8]) ?? 0;
+  const ch = r => moveOf(r).ch ?? 0;
   rows.sort(sort === 'up' ? (a, b) => ch(b) - ch(a) : sort === 'down' ? (a, b) => ch(a) - ch(b) : sort === 'name' ? (a, b) => a[1].localeCompare(b[1]) : (a, b) => (b[4] || 0) - (a[4] || 0));
   return { rows: rows.slice(0, limit), total: rows.length };
 }
 function rynekResults() {
   const box = $('#rres'); if (!box || !S.catalog) return;
   const c = S.catalog, { rows, total } = searchCatalog(R.q, R);
-  box.innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:6px">${total.toLocaleString('pl-PL')} wyników${total > rows.length ? ` · pokazuję ${rows.length}` : ''} · ceny z ${dPL(c.day)}</div>
-  <div class="tblw"><table class="tbl"><tr><th>Produkt</th><th>Trend</th><th>vs śr. 30 dni</th><th>Śr. 7 dni</th></tr>
-  ${rows.map(r => { const ch = pct(r[4], r[8]); return `<tr class="click" data-act="detail" data-id="${r[0]}"><td class="name"><div class="nm">${esc(baseName(r[1]))}<small>${esc([c.exp[r[3]], KIND[c.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td><b>${E(r[4])}</b></td><td class="${cls(ch)}">${arrow(ch)}${PC(ch)}</td><td>${E(r[7])}</td></tr>`; }).join('') || '<tr><td colspan="4" class="empty">Nic nie znaleziono.</td></tr>'}
+  if ((R.sort === 'up' || R.sort === 'down') && !SNAP.loading) { loadSnapRef().then(rynekResults); }
+  const watched = new Set(marketWatch().map(x => +x.id));
+  box.innerHTML = `<div class="spread" style="margin-bottom:6px"><div class="muted" style="font-size:12px">${total.toLocaleString('pl-PL')} wyników${total > rows.length ? ` · pokazuję ${rows.length}` : ''} · ceny z ${dPL(c.day)}${R.clean && (R.sort === 'up' || R.sort === 'down') ? ' · bez podejrzanych ruchów' : ''}${R.kind !== 'S' && (R.sort === 'up' || R.sort === 'down') ? ` · sealed: zmiana trendu ${SNAP.day ? `od ${dPL(SNAP.day)} (Cardmarket nie podaje dla nich średnich)` : '– historia bota dopiero się zbiera'}` : ''}</div>
+    ${rows.length && !S.readOnly ? `<button class="btn sm" data-act="mwtop">🔎 Sprawdź EN/NM 20 pierwszych</button>` : ''}</div>
+  <div class="tblw"><table class="tbl"><tr><th>Produkt</th><th>Trend</th><th>vs śr. 30 dni</th><th>Śr. 7 dni</th><th>Najtaniej EN/NM</th></tr>
+  ${rows.map(r => { const { ch, real } = moveOf(r), v = enVerdict(r); return `<tr class="click" data-act="detail" data-id="${r[0]}"><td class="name"><div class="nm">${esc(baseName(r[1]))}${!real && ch != null && Math.abs(ch) >= 30 ? ' <span class="badge warn" title="Średnia z 7 dni nie potwierdza ruchu – prawdopodobnie jedna nietypowa sprzedaż"><span class="dot"></span>podejrzane</span>' : ''}<small>${esc([c.exp[r[3]], KIND[c.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td><b>${E(r[4])}</b></td><td class="${cls(ch)}">${arrow(ch)}${PC(ch)}</td><td>${E(r[7])}</td>
+    <td>${v ? `<span title="${esc(`${v.en.n || 0} ofert EN/NM z wysyłką do PL · sprawdzone ${new Date(v.en.t).toLocaleString('pl-PL')}`)}">${E(v.en.min)}</span><br><span class="badge ${v.cls}">${v.txt}</span>` : watched.has(+r[0]) ? '<span class="muted" title="Rozszerzenie sprawdzi przy najbliższym przebiegu">czeka…</span>' : S.readOnly ? '—' : `<button class="btn sm" data-act="mwadd" data-id="${r[0]}" onclick="event.stopPropagation()">EN/NM</button>`}</td></tr>`; }).join('') || '<tr><td colspan="5" class="empty">Nic nie znaleziono.</td></tr>'}
   </table></div>`;
 }
 
@@ -1934,6 +1984,8 @@ const ACT = {
   sellcm: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h) formSellCM(h); },
   gradeval: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.grade) formGradeValue(h); },
   wlrange: a => { ls.set('skarbiec_wl_range', a.dataset.r); render(); },
+  mwadd: a => marketCheck([+a.dataset.id]),
+  mwtop: () => marketCheck(searchCatalog(R.q, R).rows.slice(0, 20).map(r => +r[0])),
   pfgrp: a => { const c = pfClosed(), k = a.dataset.set; c.has(k) ? c.delete(k) : c.add(k); ls.set('skarbiec_pf_closed', JSON.stringify([...c])); render(); },
   holdphotos: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.photos?.length) openPhotos(h.photos, itemMeta(h).name); },
 };
