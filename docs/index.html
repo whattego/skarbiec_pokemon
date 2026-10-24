@@ -1450,6 +1450,10 @@ function liveDupScan() {
 }
 async function savePhoto(j) {   // każde zrobione zdjęcie trafia do prywatnego repo, niezależnie od tego, co z niego dodasz
   if (S.readOnly || !GH.token || j.photo) return;
+  if (j.photoP) return j.photoP;   // już się wysyła (ze skanowania) – nie wysyłaj drugi raz, poczekaj na tamto
+  return j.photoP = savePhotoNow(j).finally(() => { j.photoP = null; });
+}
+async function savePhotoNow(j) {
   try {
     let blob = await scaleImage(j.file, 2000, 'image/webp', 0.82);
     if (blob.type !== 'image/webp') blob = await scaleImage(j.file, 2000, 'image/jpeg', 0.85);   // Safari bez WebP
@@ -1616,7 +1620,8 @@ function scQueue() {
   q.innerHTML = `
   <div class="spread"><div><h2 style="margin:0">Do zatwierdzenia</h2><div class="muted" style="font-size:12px">${SC.jobs.length} zdjęć · rozpoznane karty warte razem ${E(all.reduce((a, b) => a + b, 0))} (≈ ${P(all.reduce((a, b) => a + b, 0) * fx)}) · koszt API w tej sesji ≈ ${SC.cost.toFixed(4).replace('.', ',')} $</div></div>
     <div class="row"><label class="row muted" style="font-size:13px">data zakupu <input type="date" id="sc-date" value="${SC.date}" max="${todayISO()}"></label>
-    <button class="btn sm" data-act="scClear">Wyczyść gotowe</button><button class="btn primary" data-act="scApprove" ${sel.length ? '' : 'disabled'}>Dodaj do portfela (${sel.length})</button></div></div>
+    <button class="btn sm" data-act="scClear">Wyczyść gotowe</button><button class="btn primary" data-act="scApprove" ${sel.length && !SC.saving ? '' : 'disabled'}>${SC.saving ? '<span class="spin"></span> Dodaję…' : `Dodaj do portfela (${sel.length})`}</button></div></div>
+  ${SC.upl ? `<div class="banner" style="margin:8px 0"><span class="spin"></span> Wysyłam zdjęcia kart w tle: ${SC.upl.done}/${SC.upl.total}${SC.upl.err ? ` · ${SC.upl.err} błędów` : ''} – karty są już w portfelu, nie zamykaj strony do końca.</div>` : ''}
   ${SC.jobs.map(j => `<div class="job"><img src="${j.url}" alt="">
     <div style="min-width:0">
       <div class="spread"><div style="font-size:13px">${STAT[j.status] || (j.status === 'błąd' ? `<span class="down">${esc(j.err)}</span>` : `${j.cards.length ? `${j.cards.length} kart` : 'Nie znalazłem kart na zdjęciu.'}${j.cost ? ` · ${(j.cost * 100).toFixed(3).replace('.', ',')} ¢` : ''}`)}
@@ -1646,39 +1651,76 @@ async function scGallery() {
   g.innerHTML = `<h2>Zapisane zdjęcia</h2>${list.length ? `<div class="phgrid">${list.map(s => `<button class="ph" data-act="photo" data-path="${esc(s.path)}"><img alt="" data-src="${esc(s.path)}"><span>${dPL(s.date)} · ${s.n} kart</span></button>`).join('')}</div>` : '<div class="empty">Tu pojawią się zdjęcia z zatwierdzonych skanów.</div>'}`;
   for (const im of g.querySelectorAll('img[data-src]')) PHOTOS.url(im.dataset.src).then(u => { im.src = u; }).catch(() => { im.alt = '⚠'; });
 }
+// Dodanie do portfela: NAJPIERW zapis portfela (od razu), potem zdjęcia i wycinki w tle z licznikiem.
+// Wcześniej przycisk czekał na wysłanie wszystkich zaległych zdjęć (przy 109 kartach na telefonie – minuty bez znaku życia).
 async function scApprove() {
+  if (SC.saving) return;
   const sel = scSelected(); if (!sel.length) return;
-  for (const j of new Set(sel.map(x => x.j))) if (!j.photo && !j.cropOnly) await savePhoto(j);
-  // karty bez obrazka z TCGdex: zapisz wycinek z twojego zdjęcia (podgląd w portfelu, dopóki nie ma zdjęcia z Cardmarketu)
-  for (const { j, c, card } of sel) if ((!card.img || j.cropOnly) && c.crop && !c.cropPath && !S.readOnly) {
-    const path = `crop/${todayISO().slice(0, 7)}/${uid()}.jpg`;
-    try { await PHOTOS.put(path, c.crop, `wycinek: ${card.name}`); c.cropPath = path; PHOTOS.urls.set(path, Promise.resolve(c.cropUrl)); } catch (e) { console.warn('wycinek:', e.message); }
-  }
-  const recs = sel.map(({ j, c, card }) => {
-    const r = catRow(card.idp);
-    return { uid: uid(), id: card.idp, holo: !!c.holo, name: r ? r[1] : card.name, set: (r && S.catalog.exp[r[3]]) || card.set, kind: 'S',
-      qty: c.qty, date: SC.date, cost_pln: +(+c.cost || 0).toFixed(2), note: '', no: printedNo(c.det) || [card.no, card.total].filter(Boolean).join('/'), lang: card.lang || c.det.language, sold: null, tcgdex: card.tid,
-      ...(card.verify ? { verify: { name_en: c.det.name_en, number: c.det.number, set_code: c.det.set_code, cands: card.alts } } : {}), ...(card.img ? { img: card.img } : {}), ...(c.cropPath ? { crop: c.cropPath } : {}), ...(c.det.slab_company ? { grade: { by: (GRADERS.find(g => g === String(c.det.slab_company).toUpperCase()) || c.det.slab_company), g: String(c.det.slab_grade || '').replace(/^\D+/, ''), cert: c.det.slab_cert || '' } } : {}), ...(j.photo ? { photos: [j.photo] } : {}) };
-  });
-  const scans = new Map();
-  for (const { j } of sel) if (j.photo) scans.set(j.photo, { path: j.photo, date: todayISO(), n: j.cards.length });
-  S.vault.portfolio = [...(S.vault.portfolio || []), ...recs];
-  S.vault.scans = [...(S.vault.scans || []).filter(s => !scans.has(s.path)), ...scans.values()].slice(-500);
-  if (await saveVault(`skaner: +${recs.length} kart`)) {
+  SC.saving = true; scQueue();
+  try {
+    // ścieżki wycinków planujemy teraz (pozycja portfela od razu na nie wskazuje), pliki wysyłamy po zapisie
+    for (const { j, c, card } of sel) if ((!card.img || j.cropOnly) && c.crop && !c.cropPath && !c.cropPlan && !S.readOnly) c.cropPlan = `crop/${todayISO().slice(0, 7)}/${uid()}.jpg`;
+    const tasks = sel.map(({ j, c, card }) => {
+      const r = catRow(card.idp);
+      const rec = { uid: uid(), id: card.idp, holo: !!c.holo, name: r ? r[1] : card.name, set: (r && S.catalog.exp[r[3]]) || card.set, kind: 'S',
+        qty: c.qty, date: SC.date, cost_pln: +(+c.cost || 0).toFixed(2), note: '', no: printedNo(c.det) || [card.no, card.total].filter(Boolean).join('/'), lang: card.lang || c.det.language, sold: null, tcgdex: card.tid,
+        ...(card.verify ? { verify: { name_en: c.det.name_en, number: c.det.number, set_code: c.det.set_code, cands: card.alts } } : {}), ...(card.img ? { img: card.img } : {}),
+        ...(c.cropPath || c.cropPlan ? { crop: c.cropPath || c.cropPlan } : {}),
+        ...(c.det.slab_company ? { grade: { by: (GRADERS.find(g => g === String(c.det.slab_company).toUpperCase()) || c.det.slab_company), g: String(c.det.slab_grade || '').replace(/^\D+/, ''), cert: c.det.slab_cert || '' } } : {}),
+        ...(j.photo ? { photos: [j.photo] } : {}) };
+      return { j, c, card, rec };
+    });
+    const scans = new Map();
+    for (const { j } of sel) if (j.photo) scans.set(j.photo, { path: j.photo, date: todayISO(), n: j.cards.length });
+    S.vault.portfolio = [...(S.vault.portfolio || []), ...tasks.map(t => t.rec)];
+    S.vault.scans = [...(S.vault.scans || []).filter(s => !scans.has(s.path)), ...scans.values()].slice(-500);
+    if (!await saveVault(`skaner: +${tasks.length} kart`)) return;
     sel.forEach(({ c }) => { c.on = false; c.added = true; });
-    SC.jobs = SC.jobs.filter(j => j.cards.some(c => !c.added && c.cands.length) || j.status !== 'gotowe');
-    toast(`Dodano ${recs.length} kart do portfela ✓`);
+    toast(`Dodano ${tasks.length} kart do portfela ✓${tasks.some(t => t.c.cropPlan && !t.c.cropPath) || tasks.some(t => !t.j.photo && !t.j.cropOnly) ? ' Zdjęcia dosyłam w tle.' : ''}`, 4000);
+    const recs = tasks.map(t => t.rec);
     // karty JP/promo do weryfikacji albo bez zdjęcia z Cardmarketu: na telefonie zleć komputerowi, na komputerze uruchom od razu
     if (recs.some(r => r.verify || !r.img)) { if (enScript()) ACT.enRefresh(); else requestDesktop('en'); }
+    scUploadAfter(tasks);   // w tle – nie czekamy
+  } catch (e) {
+    toast('Nie dodano do portfela: ' + e.message, 6000);
+  } finally {
+    SC.saving = false;
+    SC.jobs = SC.jobs.filter(j => j.cards.some(c => !c.added && c.cands.length) || j.status !== 'gotowe' || (SC.upl && !j.photo && !j.cropOnly));
+    render();
   }
-  render();
+}
+// zdjęcia (jeśli nie wysłały się przy skanowaniu) i wycinki po kolei; na końcu jeden zapis portfela z uzupełnionymi ścieżkami
+async function scUploadAfter(tasks) {
+  const jobs = [...new Set(tasks.map(t => t.j))].filter(j => !j.photo && !j.cropOnly);
+  const crops = tasks.filter(t => t.c.cropPlan && !t.c.cropPath);
+  const total = jobs.length + crops.length; if (!total) return;
+  SC.upl = { done: 0, total, err: 0 }; scQueue();
+  const step = ok => { SC.upl.done++; if (!ok) SC.upl.err++; scQueue(); };
+  for (const j of jobs) { await savePhoto(j); step(!!j.photo); }
+  for (const t of crops) {
+    try { await PHOTOS.put(t.c.cropPlan, t.c.crop, `wycinek: ${t.card.name}`); t.c.cropPath = t.c.cropPlan; PHOTOS.urls.set(t.c.cropPath, Promise.resolve(t.c.cropUrl)); step(true); }
+    catch (e) { console.warn('wycinek:', e.message); step(false); }
+  }
+  // uzupełnij pozycje: zdjęcia, które doszły teraz, i usuń wycinki, których nie udało się wysłać
+  let changed = false;
+  for (const t of tasks) {
+    const h = (S.vault.portfolio || []).find(x => x.uid === t.rec.uid); if (!h) continue;
+    if (t.j.photo && !h.photos?.length) { h.photos = [t.j.photo]; changed = true; }
+    if (h.crop && h.crop === t.c.cropPlan && !t.c.cropPath) { delete h.crop; changed = true; }
+  }
+  for (const j of jobs) if (j.photo && !(S.vault.scans || []).some(s => s.path === j.photo)) { S.vault.scans = [...(S.vault.scans || []), { path: j.photo, date: todayISO(), n: j.cards.length }].slice(-500); changed = true; }
+  const err = SC.upl.err; SC.upl = null;
+  if (changed) await saveVault('skaner: zdjęcia kart');
+  toast(err ? `Zdjęcia: ${total - err}/${total} wysłane, ${err} nie udało się (karty są w portfelu).` : `Zdjęcia kart zapisane ✓ (${total})`, 4000);
+  SC.jobs = SC.jobs.filter(j => j.cards.some(c => !c.added && c.cands.length) || j.status !== 'gotowe');
+  if (S.tab === 'skaner') render();
 }
 function openPhotos(paths, title = 'Zdjęcie') {
   modal(title, paths.map(p => `<img data-src="${esc(p)}" alt="" style="width:100%;border-radius:8px;margin-bottom:8px;background:var(--surface-2);min-height:120px">`).join('') + `<p class="muted" style="font-size:12px">${paths.map(esc).join('<br>')}</p>`, d => {
     for (const im of d.querySelectorAll('img[data-src]')) PHOTOS.url(im.dataset.src).then(u => { im.src = u; }).catch(e => { im.replaceWith(Object.assign(document.createElement('div'), { className: 'banner', textContent: 'Nie udało się wczytać zdjęcia: ' + e.message })); });
   });
 }
-window.addEventListener('beforeunload', e => { if (SC.jobs.some(j => j.cards.some(c => c.on && !c.added))) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', e => { if (SC.upl || SC.jobs.some(j => j.cards.some(c => c.on && !c.added))) { e.preventDefault(); e.returnValue = ''; } });
 
 // ---------- Alerty ----------
 function vAlerty(v) {
