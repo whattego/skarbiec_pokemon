@@ -1177,9 +1177,9 @@ function vOkazje(v) {
   const cfg = dealsCfgNow(), d = S.deals, fx = d?.fx || fxNow();
   let items = (d?.items || []).filter(it => OK.src === 'all' || it.src === OK.src);
   if (OK.f === 'match') items = items.filter(it => it.match);
-  if (OK.f === 'deal') items = items.filter(it => it.match && it.diff != null && it.diff <= -cfg.threshold);
+  if (OK.f === 'deal') items = items.filter(it => it.match && it.diff != null && it.diff <= -cfg.threshold && !it.suspect);
   if (OK.f === 'deal' || OK.f === 'match') items.sort((a, b) => (a.diff ?? 999) - (b.diff ?? 999));
-  const nDeal = (d?.items || []).filter(it => it.match && it.diff != null && it.diff <= -cfg.threshold).length;
+  const nDeal = (d?.items || []).filter(it => it.match && it.diff != null && it.diff <= -cfg.threshold && !it.suspect).length;
   const ago = d?.t ? agoPL(d.t) : null;
   v.innerHTML = `
   <div class="spread"><div><h1>OLX / Allegro</h1><p class="sub">Ogłoszenia z OLX, Allegro Lokalnie i Allegro porównane z najtańszą ofertą EN/NM na Cardmarket. Rozszerzenie sprawdza nowe co 10 min (Allegro co 30 min) i pisze na Discord, gdy oferta jest tańsza o próg.</p></div>
@@ -1196,7 +1196,7 @@ function vOkazje(v) {
       <div class="chips">${[['all', 'Wszędzie'], ['olx', 'OLX'], ['lokalnie', 'Lokalnie'], ['allegro', 'Allegro']].map(([k, l]) => `<button class="chip" data-act="dealssrc" data-s="${k}" aria-pressed="${OK.src === k}">${l}</button>`).join('')}</div></div>
     <div class="tblw" style="margin-top:10px"><table class="tbl deals">
       <tr><th>Zdjęcie</th><th>Karta</th><th>Cena</th><th>Najtaniej EN/NM (Cardmarket)</th><th>Różnica</th><th></th></tr>
-      ${items.slice(0, 200).map(it => { const m = it.match, ref = it.ref, deal = it.diff != null && it.diff <= -cfg.threshold, qty = Math.max(1, it.det?.qty || 1);
+      ${items.slice(0, 200).map(it => { const m = it.match, ref = it.ref, deal = it.diff != null && it.diff <= -cfg.threshold && !it.suspect, qty = Math.max(1, it.det?.qty || 1);
         return `<tr${deal ? ' class="hit"' : ''}>
         <td><a href="${esc(it.url)}" target="_blank" rel="noopener">${it.img ? `<img class="dimg" src="${esc(it.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="muted">—</span>'}</a></td>
         <td class="name"><div class="nm" style="display:flex;gap:8px;align-items:flex-start">${m?.img ? `<img class="dcard" src="${esc(m.img)}" alt="" loading="lazy">` : ''}<div style="min-width:0">${m ? `${esc(m.name)} <span class="muted" style="font-weight:400">${esc(m.number || '')}</span>${m.idp ? ' ' + cmA(m.idp, m.name) : ''}<small>${esc(m.set || '')}</small>` : `<span class="muted">${esc(DK[it.det?.kind] || '?')}${it.det?.name_en ? ': ' + esc(it.det.name_en) + (it.det.number ? ' ' + esc(it.det.number) + (it.det.set_total ? '/' + esc(it.det.set_total) : '') : '') : ''}</span>`}
@@ -1204,8 +1204,8 @@ function vOkazje(v) {
           <small title="${esc(it.title)}">„${esc(it.title.length > 70 ? it.title.slice(0, 70) + '…' : it.title)}”</small></div></div></td>
         <td><b>${P(it.price)}</b>${qty > 1 ? `<br><small class="muted">${P(it.price / qty)} / szt.</small>` : ''}<br><small class="muted">${SRC_L[it.src] || it.src}${it.city ? ' · ' + esc(it.city) : ''}${it.t ? ' · ' + agoPL(it.t) : ''}</small></td>
         <td>${ref ? `${E(ref.eur)}<br><small class="muted">≈ ${P(ref.eur * fx)}${ref.src === 'cm' ? ` · ${ref.n ?? '?'} ofert` : ' · trend (EN/NM w drodze)'}</small>` : m ? '<span class="muted">sprawdzam…</span>' : '<span class="muted" title="Rozszerzenie porównuje tylko jednoznacznie rozpoznane karty EN i sealed – JP, sloty i loty wymagają ręcznej oceny">—</span>'}</td>
-        <td>${it.diff != null ? `<b class="${it.diff < 0 ? 'up' : 'down'}">${it.diff > 0 ? '+' : ''}${String(it.diff).replace('.', ',')}%</b>${deal ? '<br><span class="badge good">okazja</span>' : ''}` : '—'}</td>
-        <td><a class="btn sm" href="${esc(it.url)}" target="_blank" rel="noopener">Otwórz ↗</a></td></tr>`; }).join('') || `<tr><td colspan="6" class="empty">${d ? 'Brak ofert w tym widoku.' : 'Jeszcze nic – rozszerzenie zapisze pierwsze ogłoszenia w ciągu 10 min od przeładowania (↻).'}</td></tr>`}
+        <td>${it.diff != null ? `<b class="${it.diff < 0 ? 'up' : 'down'}">${it.diff > 0 ? '+' : ''}${String(it.diff).replace('.', ',')}%</b>${deal ? '<br><span class="badge good">okazja</span>' : it.suspect ? '<br><span class="badge warn" title="Ponad 85% taniej – zwykle cena za sztukę (np. jeden booster z boxa), podróbka albo inny produkt. Bez powiadomienia."><span class="dot"></span>podejrzanie tanio</span>' : ''}${it.det?.price_basis === 'per_piece' ? '<br><small class="muted">cena za sztukę</small>' : ''}` : '—'}</td>
+        <td><div class="stack" style="gap:4px;align-items:flex-end"><a class="btn sm" href="${esc(it.url)}" target="_blank" rel="noopener">${SRC_L[it.src] || 'Ogłoszenie'} ↗</a>${m?.idp ? `<a class="btn sm" href="${esc(cmLink(m.idp, m.name))}" target="_blank" rel="noopener">Cardmarket ↗</a>` : ''}</div></td></tr>`; }).join('') || `<tr><td colspan="6" class="empty">${d ? 'Brak ofert w tym widoku.' : 'Jeszcze nic – rozszerzenie zapisze pierwsze ogłoszenia w ciągu 10 min od przeładowania (↻).'}</td></tr>`}
     </table></div>
     <p class="muted" style="font-size:12px;margin:8px 0 0">Różnica = cena ogłoszenia (za sztukę) vs najtańsza oferta EN/NM od zaufanego sprzedawcy na Cardmarket (≥ 10 sprzedaży, UE), przeliczona po kursie NBP ${String(fx.toFixed(4)).replace('.', ',')}. Do czasu sprawdzenia Cardmarketu porównanie jest z trendem (wszystkie języki) – powiadomienia przychodzą tylko po porównaniu z EN/NM. Karty JP, sloty i loty nie są porównywane automatycznie. Zawsze sprawdź zdjęcia i sprzedawcę – tytuły bywają mylące.</p>
   </div>`;
