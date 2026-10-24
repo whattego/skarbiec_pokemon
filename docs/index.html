@@ -344,8 +344,10 @@ const pendingVerify = () => (S.vault?.portfolio || []).filter(h => h.verify && !
 async function syncVerify() {
   if (S.readOnly || !GH.token || !PHOTOS.repo) return;
   const req = pendingVerify().map(h => ({ key: h.uid, cands: h.verify.cands || [], no: h.verify.number || '', code: h.verify.set_code || '' }));
-  const json = JSON.stringify({ v: 1, req });
-  if (json === S._verify || (!req.length && !S._verify)) return;
+  // dodatki, których numery kart rozszerzenie ma pobrać z listy dodatku na Cardmarkecie (wyszukiwarka „Nazwa (KOD NR)”)
+  const exps = (S.vault.cm_exps || []).filter(e => Date.now() - e.t < 14 * 864e5).map(e => e.id);
+  const json = JSON.stringify({ v: 1, req, exps });
+  if (json === S._verify || (!req.length && !exps.length && !S._verify)) return;
   try {
     await PHOTOS.enqueue(async () => {
       let sha; try { sha = (await GH.call('/contents/en/verify.json', {}, PHOTOS.repo)).sha; } catch (e) { if (!/ 404/.test(e.message)) throw e; }
@@ -639,8 +641,9 @@ function itemMeta(it) {
 }
 async function loadCatalog() {
   if (S.catalog) return S.catalog;
-  if (!S._catP) S._catP = Promise.all([fetchPublic('catalog.json'), fetchPublic('cm_expansions.json').catch(() => null)]).then(([c, cm]) => {
+  if (!S._catP) S._catP = Promise.all([fetchPublic('catalog.json'), fetchPublic('cm_expansions.json').catch(() => null), fetchPublic('expansions.json').catch(() => null)]).then(([c, cm, ex]) => {
     if (!c) throw new Error('Brak katalogu – bot jeszcze ani razu się nie uruchomił.');
+    S.setCodes = ex?.code || {};   // kod setu z karty (TCGdex, np. „30C”, „SVI”) → idExpansion CM; pisze bot
     Object.assign(c.exp, cm?.exp || {});   // oficjalne nazwy dodatków z Cardmarketu (rozszerzenie) – od razu, bez czekania na bota
     S.catalog = c; S.catMap = new Map(c.p.map(r => [r[0], r]));
     c.p.forEach(r => { r.lc = (r[1] + ' ' + (c.exp[r[3]] || '')).toLowerCase(); });
@@ -1535,10 +1538,12 @@ function catalogCandidates(c, cap = 15) {
 // pewne trafienie: kod i numer z tytułu produktu (S.cmnums) zgadzają się z wydrukiem na karcie
 function byNumber(c, cands) {
   const code = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  // kod i numer porównywane łącznie: tytuł „(30C TM 99)” bywa zapisany jako [„30C TM”, „99”] albo [„30C”, „TM 99”]
   const hits = cands.filter(x => {
     const e = S.cmnums?.[x.idp]; if (!e) return false;
-    if (normNo(e[1]) !== normNo(c.number)) return false;
-    return !c.set_code || !e[0] || code(e[0]) === code(c.set_code);
+    if (c.set_code && e[0]) return code(e[0]) + normNo(e[1]) === code(c.set_code) + normNo(c.number);
+    const tail = String(e[0] || '').split(' ').slice(1).join('');
+    return normNo(e[1]) === normNo(c.number) || (tail && normNo(tail + e[1]) === normNo(c.number));
   });
   return hits.map(x => ({ ...x, verify: false, exact: true, cmCode: S.cmnums[x.idp].slice(0, 2).join(' ') }));
 }
@@ -2096,6 +2101,23 @@ async function openDetail(id, holo) {
 }
 
 function pickerHTML() { return `<input type="search" id="pk-q" placeholder="Wpisz nazwę karty, dodatku albo produktu sealed…" style="width:100%"><div class="chips" style="margin:8px 0" id="pk-k">${[['all', 'Wszystko'], ['S', 'Karty'], ['sealed', 'Sealed']].map(([k, l], i) => `<button class="chip" data-k="${k}" aria-pressed="${i === 0}">${l}</button>`).join('')}</div><div id="pk-res" class="tblw"><span class="spin"></span> Ładuję katalog…</div>`; }
+// kod setu → dodatki CM: tytuły kart już znane z Cardmarketu (cmnums), mapa kodów TCGdex (bot), kody JP (jpCodeExp)
+function codeExps(code) {
+  const cc = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''), k = cc(code), out = new Set();
+  for (const [id, e] of Object.entries(S.cmnums || {})) if (cc(String(e[0] || '').split(' ')[0]) === k) { const r = catRow(+id); if (r) out.add(r[3]); }
+  for (const [c, id] of Object.entries(S.setCodes || {})) if (cc(c) === k) out.add(+id);
+  for (const [c, id] of Object.entries(S.codeExp || {})) if (id != null && cc(c) === k) out.add(+id);
+  return out;
+}
+// prośba do rozszerzenia: pobierz numery wszystkich kart dodatku z jego listy na Cardmarkecie (en/verify.json → exps)
+async function askExpNums(ids) {
+  if (S.readOnly) return toast('Tryb tylko do odczytu.');
+  S.vault.cm_exps = [...(S.vault.cm_exps || []).filter(e => !ids.includes(e.id) && Date.now() - e.t < 14 * 864e5), ...ids.map(id => ({ id, t: Date.now() }))].slice(-20);
+  if (!await saveVault('numery kart dodatku z Cardmarketu')) return;
+  await syncVerify();
+  if (document.documentElement.dataset.skarbiecEnExt) { document.documentElement.dataset.skarbiecEnScope = 'p'; document.dispatchEvent(new Event('skarbiec-en-run')); toast('Rozszerzenie pobiera numery – wyszukaj ponownie za kilka minut.', 5000); }
+  else requestDesktop('en:p').then(ok => ok && toast('Zlecone komputerowi – numery będą za ok. 5–10 min (Chrome z rozszerzeniem musi być włączony).', 6000));
+}
 function mountPicker(d, onPick) {
   let kind = 'all';
   const run = () => {
@@ -2105,8 +2127,8 @@ function mountPicker(d, onPick) {
     // numer karty w zapytaniu („darkrai 037/xy-p”, „mew 129/103”, „pikachu 30C023”): cennik CM nie zna numerów,
     // więc numer sprawdzamy w TCGdex (EN i JA), a w cenniku szukamy po samej nazwie
     // nazwa jak na Cardmarkecie: „Venusaur (s8a-P 002)”, „Pikachu (30C 032)” albo bez nawiasu „venusaur s8a-p 002” → kod setu + numer
-    const cm = q.match(/^(.*?)\s*\(\s*([a-z0-9][a-z0-9.\-]*)\s+([a-z]{0,4}\d{1,4}[a-z]?)\s*\)?\s*$/i)
-      || q.match(/^(?:(.*?)\s+)?([a-z]*\d[a-z0-9.]*[a-z][a-z0-9.\-]*|[a-z][a-z0-9.]*\d[a-z0-9.\-]*|[a-z0-9.]+-[a-z0-9.\-]+)\s+([a-z]{0,4}\d{1,4}[a-z]?)\s*$/i);   // bez nawiasu tylko kod z cyfrą lub myślnikiem („charizard ex 006” to nie kod „ex”)
+    const cm = q.match(/^(.*?)\s*\(\s*([a-z0-9][a-z0-9.\-]*)\s+([a-z]{0,4}\s?\d{1,4}[a-z]?)\s*\)?\s*$/i)
+      || q.match(/^(?:(.*?)\s+)?([a-z]*\d[a-z0-9.]*[a-z][a-z0-9.\-]*|[a-z][a-z0-9.]*\d[a-z0-9.\-]*|[a-z0-9.]+-[a-z0-9.\-]+)\s+([a-z]{0,4}\s?\d{1,4}[a-z]?)\s*$/i);   // bez nawiasu tylko kod z cyfrą lub myślnikiem („charizard ex 006” to nie kod „ex”)
     const cmCode = cm && /[a-z]/i.test(cm[2]) && /\d/.test(cm[3]) ? cm[2] : null;
     const toks = q.split(/\s+/), numTok = cmCode ? `${cm[3]}/${cmCode}` : toks.find(t => /\d/.test(t) && (/\//.test(t) || /^[a-z]{0,5}\d{1,4}[a-z]?$/i.test(t)));
     const nameQ = cmCode ? (cm[1] || '').trim() : toks.filter(t => t !== numTok).join(' ');
@@ -2134,24 +2156,34 @@ function mountPicker(d, onPick) {
           const hit = bn && (!nameQ || nameSim(baseName(bn[1]), nameQ) >= 0.4) ? [bn] : inExp.length === 1 ? inExp : [];
           if (hit.length) return hit.map(asCand);
         }
-        // kod znany z tytułów innych kart CM (ten sam kod → ten sam dodatek) → wersje o tej nazwie w tym dodatku
-        const cc = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''), exps = new Set();
-        for (const [id, e] of Object.entries(S.cmnums || {})) if (cc(e[0]) === cc(cmCode)) { const r = catRow(+id); if (r) exps.add(r[3]); }
+        // kod → dodatek: z tytułów innych kart CM (ten sam kod) i z mapy kodów setów (bot, TCGdex: 30C → 30th Celebration)
+        const exps = codeExps(cmCode);
         return nameQ && exps.size ? pool.filter(r => exps.has(r[3])).slice(0, 6).map(r => ({ ...asCand(r), guess: true, no: S.cmnums?.[r[0]]?.slice(0, 2).join(' ') || `${cmCode} ?` })) : [];
       };
       Promise.all([viaCode().catch(() => []), cmCode ? Promise.resolve([]) : resolveIn('en', pseudo, true)]).then(([codeHits, tcg]) => {
         const box = $('#pk-num', d); if (!box || my !== runId) return;
         const seen = new Set(), exact = [...byCm, ...codeHits, ...tcg.filter(x => x.idp).map(x => ({ ...x, lang: 'en' }))].filter(x => !seen.has(x.idp) && seen.add(x.idp));
-        box.innerHTML = exact.length
+        // numer nieznany, a dodatek z kodu znany → rozszerzenie pobierze numery wszystkich kart tego dodatku z listy na Cardmarkecie
+        const need = cmCode && !exact.some(x => !x.guess) ? [...codeExps(cmCode)] : [];
+        const asked = need.filter(id => (S.vault.cm_exps || []).some(e => e.id === id));
+        const names = esc(need.map(id => S.catalog.exp[id] || '#' + id).join(', '));
+        const fetchBox = need.length ? `<div class="banner" style="margin:6px 0">${asked.length === need.length
+            ? `Rozszerzenie pobiera numery kart dodatku ${names} z Cardmarketu – wyszukaj ponownie za kilka minut.`
+            : `Nie znam jeszcze numerów kart dodatku ${names}. <button class="btn sm primary" data-expnums="${need.join(',')}">📥 Pobierz numery z Cardmarketu</button>`}</div>` : '';
+        box.innerHTML = fetchBox + (exact.length
           ? `<h3 style="margin:4px 0 6px">${exact.every(x => x.guess) ? `Numer ${esc(label)} nieznany – wersje w dodatku z kodem ${esc(cmCode)}` : `${cmCode ? 'Dokładne trafienie' : 'Numer'} ${esc(label)}`}</h3><table class="tbl">${exact.map(x => { const r = catRow(x.idp); return `<tr><td class="name"><div class="nm">${esc(x.name)} <span class="muted" style="font-weight:400">${esc(x.no)}${x.total ? '/' + x.total : ''}</span>${x.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}<small>${esc(x.set)}</small></div></td><td>${E(r?.[4])}</td><td><button class="btn sm primary" data-pick="${x.idp}">Wybierz</button></td></tr>`; }).join('')}</table>`
-          : `<p class="muted" style="font-size:12px">Numer ${esc(label)} nie jest jeszcze znany. Wybierz wersję z listy poniżej po nazwie dodatku (np. „XY Promos”, „30th Celebration JP”). Numery uzupełnia rozszerzenie przy sprawdzaniu cen – potem wyszukiwanie po numerze trafia od razu.</p>`;
+          : need.length ? '' : `<p class="muted" style="font-size:12px">Numer ${esc(label)} nie jest jeszcze znany. Wybierz wersję z listy poniżej po nazwie dodatku (np. „XY Promos”, „30th Celebration JP”). Numery uzupełnia rozszerzenie przy sprawdzaniu cen – potem wyszukiwanie po numerze trafia od razu.</p>`);
       });
     }
   };
   let runId = 0, tmr;
   $('#pk-q', d).addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(run, 250); });
   $('#pk-k', d).addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (!b) return; kind = b.dataset.k; $('#pk-k', d).querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c === b)); run(); });
-  $('#pk-res', d).addEventListener('click', e => { const b = e.target.closest('[data-pick]'); if (b) onPick({ id: +b.dataset.pick, holo: !!b.dataset.holo }); });
+  $('#pk-res', d).addEventListener('click', async e => {
+    const x = e.target.closest('[data-expnums]');
+    if (x) { x.disabled = true; await askExpNums(x.dataset.expnums.split(',').map(Number)); run(); return; }
+    const b = e.target.closest('[data-pick]'); if (b) onPick({ id: +b.dataset.pick, holo: !!b.dataset.holo });
+  });
   loadCatalog().then(() => { run(); $('#pk-q', d).focus(); }).catch(e => { $('#pk-res', d).textContent = e.message; });
 }
 function snapshotMeta(it) { const r = catRow(it.id); return r ? { name: r[1], set: S.catalog.exp[r[3]] || '', kind: S.catalog.kinds[r[2]] } : {}; }

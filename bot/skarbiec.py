@@ -175,6 +175,10 @@ def tcgdex_expansions(products):
     cache.setdefault("ja", {})
     cache.setdefault("var", {})
     cache.setdefault("done", {"en": [], "ja": []})
+    # kod setu z karty (TCGdex abbreviation.official, np. "30C", "SVI", "MEG") → idExpansion CM; strona szuka po nim
+    # nazw w formacie Cardmarketu („Darkrai & Cresselia LEGEND (30C TM 99)”)
+    cache.setdefault("code", {})
+    cache.setdefault("done_code", [])
     if os.environ.get("TCGDEX_OFF"):
         return cache["en"], cache["ja"], cache["var"]
 
@@ -190,6 +194,7 @@ def tcgdex_expansions(products):
         if not s:
             return None  # błąd sieci – spróbujemy przy następnym uruchomieniu
         cards = s.get("cards") or []
+        abbr = ((s.get("abbreviation") or {}).get("official") or "").strip()
         # kilka kart z różnych miejsc zestawu (pierwsze bywają bez ceny)
         picks = [cards[i] for i in sorted({0, len(cards) // 3, len(cards) // 2, len(cards) - 1}) if 0 <= i < len(cards)]
         for c in picks:
@@ -201,12 +206,13 @@ def tcgdex_expansions(products):
                 extra = {products[v]["idExpansion"] for v in
                          (int((d.get("thirdParty") or {}).get("cardmarket") or 0) for d in card.get("variants_detailed") or [])
                          if v in products} - {p["idExpansion"]}
-                return sid, p["idExpansion"], s.get("name") or sid, extra
-        return sid, None, None, set()
+                return sid, p["idExpansion"], s.get("name") or sid, extra, abbr
+        return sid, None, None, set(), abbr
 
     for lang in ("en", "ja"):
         sets = get(f"{lang}/sets") or []
-        todo = [s["id"] for s in sets if s["id"] not in cache["done"][lang]]
+        todo = [s["id"] for s in sets if s["id"] not in cache["done"][lang]
+                or (lang == "en" and s["id"] not in cache["done_code"])]
         if not todo:
             continue
         print(f"TCGdex {lang}: {len(todo)} nowych zestawów")
@@ -214,7 +220,13 @@ def tcgdex_expansions(products):
             for res in ex.map(lambda sid: set_expansion(lang, sid), todo):
                 if not res:
                     continue
-                sid, exp, name, extra = res
+                sid, exp, name, extra, abbr = res
+                if lang == "en":
+                    cache["done_code"].append(sid)
+                    if abbr and exp is not None:
+                        cache["code"].setdefault(abbr.upper(), exp)
+                if sid in cache["done"][lang]:
+                    continue
                 cache["done"][lang].append(sid)
                 if exp is not None:
                     # kilka zestawów TCGdex może wskazać ten sam dodatek CM (np. Trainer Gallery) – zostaje krótsza nazwa
