@@ -307,6 +307,24 @@ async function loadEN() {
     S.en = m;
   } catch (e) { console.warn('ceny EN/NM:', e.message); }
 }
+// Otwarta strona sama dociąga nowe wyniki rozszerzenia (komplet co ~15 min, ceny EN/NM): co 3 min, gdy karta jest widoczna,
+// i od razu po powrocie do karty. Przerysowanie tylko, gdy coś się zmieniło i nie wpisujesz akurat niczego.
+const enSig = () => JSON.stringify([(S.opt || []).map(o => o.t), (S.enHist || []).length, Math.max(0, ...[...(S.en?.values() || [])].map(v => Date.parse(v.t) || 0)), Object.keys(S.cmnums || {}).length]);
+let _enLiveT = 0, _enLiveOn = false;
+async function enLiveTick() {
+  if (document.visibilityState !== 'visible' || !S.vault || Date.now() - _enLiveT < 60e3) return;
+  _enLiveT = Date.now();
+  const before = enSig(); await loadEN();
+  if (enSig() === before) return;
+  await applyVerify();
+  const typing = document.querySelector('dialog[open]') || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+  if (!typing && ['watch', 'portfel', 'pulpit'].includes(S.tab)) { const y = scrollY; render(); scrollTo(0, y); }
+}
+function enLiveRefresh() {
+  if (_enLiveOn) return; _enLiveOn = true; _enLiveT = Date.now();
+  setInterval(enLiveTick, 180e3);
+  document.addEventListener('visibilitychange', enLiveTick);
+}
 const enOf = it => S.en?.get(keyOf(it)) || null;
 // lista kart dla skryptu Tampermonkey „Skarbiec – ceny EN/NM” (watchlisty + nie sprzedany portfel); jawna, ale w prywatnym repo
 // Karty do weryfikacji (skan JP/promo bez pewnego numeru): lista kandydatów → en/verify.json dla rozszerzenia,
@@ -1830,6 +1848,7 @@ async function unlock(pw, remember) {
   shell();
   loadCatalog().then(() => { if (S.tab !== 'rynek') render(); }).catch(() => {});
   loadEN().then(async () => { await loadCatalog().catch(() => {}); applyVerify(); syncVerify(); if (S.en?.size && ['watch', 'portfel'].includes(S.tab)) render(); });
+  enLiveRefresh();
   loadCatalog().catch(() => {}).then(syncTargets);
 }
 
