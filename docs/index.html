@@ -491,6 +491,13 @@ function enSeries(items) {
 // skrypt Tampermonkey działa też na tej stronie: ustawia dataset.skarbiecEn (wersja) i przekazuje postęp z karty Cardmarketu (skarbiec-en-status)
 const enScript = () => document.documentElement.dataset.skarbiecEn || null;
 // wynik optymalizatora (komplet EN/NM z wysyłką) dla watchlisty o tym samym składzie (te same idProduct)
+// dlaczego optymalizator nie sprawdził części wysyłek w koszyku (opt.why z rozszerzenia)
+const UNV_SHORT = { auto: 'automat sprawdza po 4 na liczenie', reserve: 'automat oszczędza limit', day: 'dzienny limit 100 wykorzystany', run: 'limit 15 na liczenie', cart: 'koszyk nie był pusty' };
+const UNV_WHY = { auto: 'Automat co 15 min sprawdza najwyżej 4 sprzedawców na liczenie, żeby starczyło limitu na cały dzień. Kliknij „Uaktualnij ceny EN/NM” – to uruchomi pełne liczenie (do 15 sprawdzeń).',
+  reserve: 'Automatowi zostało mniej niż 30 z dziennego limitu 100 sprawdzeń – resztę zostawia na liczenie po kliknięciu „Uaktualnij ceny EN/NM”.',
+  day: 'Dzienny limit 100 sprawdzeń w koszyku wykorzystany – reszta wysyłek z oficjalnej tabeli Cardmarketu do jutra.',
+  run: 'Pełne liczenie sprawdza najwyżej 15 sprzedawców; kolejne liczenia dosprawdzą resztę (wyniki są zapamiętywane na 90 dni).',
+  cart: 'W koszyku Cardmarketu leżały karty – sprawdzanie wysyłek wymaga pustego koszyka.' };
 function optFor(wl) {
   const ids = new Set((wl.items || []).map(it => +it.id));
   return (S.opt || []).filter(o => o.ids?.length === ids.size && o.ids.every(id => ids.has(+id))).sort((a, b) => a.t < b.t ? 1 : -1)[0] || null;
@@ -873,7 +880,7 @@ function vWatch(v) {
       <div class="row"><button class="btn sm primary" data-act="enRefresh" ${S.enStatus?.state === 'run' ? 'disabled' : ''}>🔄 Uaktualnij ceny EN/NM</button><button class="btn sm" data-act="addto" data-mode="watch">+ Dodaj pozycję</button><button class="btn sm" data-act="editwl">Ustawienia listy</button><button class="btn sm" data-act="exportwl">Kopiuj JSON</button></div></div>
     <div style="text-align:right;margin-top:4px">${enStatusHTML()}</div>
     <div class="grid g4" style="margin:14px 0">
-      <div class="stat"><div class="lbl">Komplet EN/NM z wysyłką</div><div class="val">${E(buyNow)}</div><div class="note">${opt ? `${opt.sellers} paczek · same karty ${E(opt.cards)} · liczone ${agoPL(opt.t)}${opt.verified ? '' : ' · część wysyłek z tabeli'}` : `same karty: ${E(enNow)}${enNow != null ? ' bez wysyłki' : ''} · wysyłkę policzy optymalizator Cardmarketu`}</div></div>
+      <div class="stat"><div class="lbl">Komplet EN/NM z wysyłką</div><div class="val">${E(buyNow)}</div><div class="note">${opt ? `${opt.sellers} paczek · same karty ${E(opt.cards)} · liczone ${agoPL(opt.t)}${opt.verified ? ' · wysyłki sprawdzone w koszyku' : ` · <span title="${esc(UNV_WHY[opt.why] || '')}">${opt.unv ? `${opt.unv} z ${opt.sellers}` : 'część'} wysyłek z tabeli${opt.why ? ' – ' + esc(UNV_SHORT[opt.why] || '') : ''}</span>`}` : `same karty: ${E(enNow)}${enNow != null ? ' bez wysyłki' : ''} · wysyłkę policzy optymalizator Cardmarketu`}</div></div>
       <div class="stat"><div class="lbl">Suma wg trendu</div><div class="val">${E(now)}</div><div class="note">≈ ${P(now * fxNow())} · wszystkie języki</div></div>
       <div class="stat"><div class="lbl">Zmiana 7 dni</div><div class="val ${cls(pct(now, back(7)))}">${PC(pct(now, back(7)))}</div><div class="note">30 dni: ${PC(pct(now, back(30)))} · vs śr. 30 dni: ${PC(pct(now, avg30sum))}</div></div>
       <div class="stat"><div class="lbl">Próg okazji</div><div class="val">${wl.target_eur ? E(wl.target_eur) : '—'}</div><div class="note">${wl.target_eur ? (cmpNow > 0 ? (cmpNow <= wl.target_eur ? `<span class="badge good"><span class="dot"></span>${cmpLabel} poniżej progu</span>` : `${cmpLabel}: brakuje ${E(cmpNow - wl.target_eur)}`) + (wl.metric === 'komplet' ? '<br>rozszerzenie: auto-koszyk + Discord' : '<br>bot: alert raz dziennie') : wl.metric === 'komplet' ? 'czeka na pierwsze liczenie rozszerzenia' : 'brak cen') : '<a href="#" data-act="editwl">ustaw próg</a>'}</div></div>
@@ -1869,7 +1876,7 @@ const ACT = {
     if (!enScript() && GH.token && !S.readOnly) {   // telefon / przeglądarka bez rozszerzenia: zleć komputerowi
       S.enStatus = { state: 'queued', text: 'zlecam komputerowi…', t: Date.now() }; render();
       await syncTargets(); await syncVerify();
-      const ok = await requestDesktop('en');
+      const ok = await requestDesktop((S.vault.watchlists || []).some(w => w.metric === 'komplet') ? 'en+komplet' : 'en');
       S.enStatus = ok ? { state: 'queued', text: `zlecone o ${new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })} – komputer z rozszerzeniem zrobi to w ciągu ok. 5 min (musi być włączony). Odśwież stronę później.`, t: Date.now() }
         : { state: 'err', text: 'nie udało się zapisać zlecenia', t: Date.now() };
       render(); return;
@@ -1885,6 +1892,8 @@ const ACT = {
       S.enStatus = { state: 'run', text: 'rozszerzenie otwiera Cardmarket w tle…', t: Date.now() }; render();
       await syncTargets();
       document.dispatchEvent(new Event('skarbiec-en-run'));
+      // listy „komplet z wysyłką”: od razu pełne liczenie optymalizatora (do 15 sprawdzeń wysyłki w koszyku, jak w #watch)
+      if ((S.vault.watchlists || []).some(w => w.metric === 'komplet')) document.dispatchEvent(new Event('skarbiec-komplet-run'));
       return;
     }
     // Cloudflare Cardmarketu wpuszcza tylko zapytania z karty cardmarket.com – otwieramy ją (w tym samym kliknięciu, żeby nie zablokowało okienek),
