@@ -2573,6 +2573,13 @@ const ACT = {
     if (document.documentElement.dataset.skarbiecEnExt) {   // rozszerzenie Chrome: samo otworzy Cardmarket w tle i zamknie
       S.enStatus = { state: 'run', text: 'rozszerzenie otwiera Cardmarket w tle…', t: Date.now() }; render();
       await syncTargets();
+      // watchlista „komplet z wysyłką”: optymalizator i tak pobiera oferty EN/NM każdej karty i zapisuje ich ceny – osobne
+      // sprawdzanie cen tych samych kart (druga karta Cardmarketu) jest zbędne
+      const curWl = (S.vault.watchlists || []).find(w => w.id === S.wl);
+      if (scope === 'w' && komplet && curWl?.metric === 'komplet') {
+        S.enStatus = { state: 'run', text: 'optymalizator liczy komplet i ceny kart w tle…', t: Date.now() }; render();
+        document.dispatchEvent(new Event('skarbiec-komplet-run')); return;
+      }
       document.documentElement.dataset.skarbiecEnScope = scope;   // en.js przekaże zakres rozszerzeniu
       document.dispatchEvent(new Event('skarbiec-en-run'));
       // listy „komplet z wysyłką”: od razu pełne liczenie optymalizatora (do 15 sprawdzeń wysyłki w koszyku, jak w #watch)
