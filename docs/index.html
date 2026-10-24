@@ -453,6 +453,7 @@ function shell() {
 }
 function render() {
   killCharts();
+  if (S.tab !== 'skaner' && LIVE.stream) liveStop();
   const v = $('#view'); if (!v) return;
   document.querySelectorAll('nav.tabs button').forEach(b => b.dataset.id === S.tab ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'));
   ({ pulpit: vPulpit, watch: vWatch, portfel: vPortfel, skaner: vSkaner, rynek: vRynek, alerty: vAlerty, ustawienia: vUstawienia })[S.tab](v);
@@ -774,6 +775,100 @@ function scAdd(files) {
 }
 const scSelected = () => SC.jobs.flatMap(j => j.cards.filter(c => c.on && c.cands[c.sel]).map(c => ({ j, c, card: c.cands[c.sel] })));
 
+// ---------- tryb ciągły (telefon w stojaku nad kartą) ----------
+// Kamera działa cały czas. Co 200 ms mały podgląd (48×36, kolor) porównujemy z poprzednim:
+// ruch (ręka, kładziona karta) → czekamy; obraz stoi ≥ 0,7 s i różni się od ostatnio zeskanowanego oraz od pustego tła
+// → zdjęcie w pełnej rozdzielczości trafia do kolejki skanera (to samo rozpoznawanie co przy zwykłych zdjęciach).
+const LIVE = { stream: null, video: null, timer: null, prev: null, base: null, last: null, still: 0, n: 0, wake: null, state: '', sens: +(ls.get('skarbiec_live_sens') || 8) };
+const LIVE_W = 48, LIVE_H = 36, LIVE_STABLE_MS = 700;
+function liveSample() {
+  const v = LIVE.video; if (!v || v.readyState < 2) return null;
+  const c = liveSample.c ||= Object.assign(document.createElement('canvas'), { width: LIVE_W, height: LIVE_H });
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(v, 0, 0, LIVE_W, LIVE_H);
+  // kolor, nie skala szarości – żółta karta na jasnej tacy w szarości wygląda jak puste tło
+  const d = g.getImageData(0, 0, LIVE_W, LIVE_H).data, out = new Uint8Array(LIVE_W * LIVE_H * 3);
+  for (let i = 0, j = 0; i < d.length; i += 4) { out[j++] = d[i]; out[j++] = d[i + 1]; out[j++] = d[i + 2]; }
+  return out;
+}
+const liveDiff = (a, b) => { if (!a || !b) return 255; let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; };
+function liveSet(state, txt) {
+  LIVE.state = state; LIVE.text = txt;
+  const el = $('#lv-state'); if (el) el.innerHTML = txt;
+  const f = $('#lv-frame'); if (f) f.style.outlineColor = { move: 'var(--s4)', wait: 'var(--axis)', shot: 'var(--s3)' }[state] || 'var(--axis)';
+}
+function liveBeep() {
+  try { const a = liveBeep.ctx ||= new AudioContext(), o = a.createOscillator(), g = a.createGain(); o.frequency.value = 880; g.gain.value = 0.08; o.connect(g).connect(a.destination); o.start(); o.stop(a.currentTime + 0.09); } catch {}
+  navigator.vibrate?.(60);
+}
+async function liveShot(manual) {
+  const v = LIVE.video; if (!v?.videoWidth) return;
+  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
+  if (!blob) return;
+  LIVE.n++;
+  scAdd([new File([blob], `stojak-${Date.now()}.jpg`, { type: 'image/jpeg' })]);
+  liveBeep();
+  const n = $('#lv-n'); if (n) n.textContent = LIVE.n;
+  liveSet('shot', `✓ Zeskanowano kartę nr ${LIVE.n}${manual ? ' (ręcznie)' : ''} – połóż następną`);
+}
+function liveTick() {
+  const s = liveSample(); if (!s) return;
+  const now = Date.now(), motion = liveDiff(s, LIVE.prev);
+  LIVE.prev = s;
+  if (motion > LIVE.sens / 2) {
+    LIVE.still = now;
+    // ręka zasłoniła kartę (obraz wyraźnie inny niż przy ostatnim zdjęciu) → następna nieruchoma karta to nowe zdjęcie,
+    // także gdy to druga taka sama karta położona na pierwszej
+    if (LIVE.last && liveDiff(s, LIVE.last) >= LIVE.sens) LIVE.armed = true;
+    liveSet('move', 'Ruch… czekam, aż karta się uspokoi'); return;
+  }
+  if (now - LIVE.still < LIVE_STABLE_MS) return;
+  if (!LIVE.base) { LIVE.base = s; LIVE.last = s; LIVE.armed = false; liveSet('wait', 'Tło zapamiętane – połóż kartę'); return; }
+  const fromBase = liveDiff(s, LIVE.base), fromLast = liveDiff(s, LIVE.last);
+  if (fromBase < LIVE.sens) { LIVE.last = s; LIVE.armed = false; if (LIVE.state !== 'wait') liveSet('wait', 'Pusto – połóż kartę'); return; }   // karta zdjęta
+  if (fromLast >= LIVE.sens || LIVE.armed) { LIVE.last = s; LIVE.armed = false; liveShot(); }
+}
+async function liveStart() {
+  if (!navigator.mediaDevices?.getUserMedia) return toast('Ta przeglądarka nie daje dostępu do kamery.', 5000);
+  try {
+    LIVE.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+  } catch (e) { LIVE.stream = null; return toast('Brak dostępu do kamery: ' + e.message, 6000); }
+  LIVE.video ||= Object.assign(document.createElement('video'), { muted: true, playsInline: true, autoplay: true });
+  LIVE.video.setAttribute('playsinline', '');
+  LIVE.video.srcObject = LIVE.stream;
+  await LIVE.video.play().catch(() => {});
+  Object.assign(LIVE, { prev: null, base: null, last: null, still: Date.now(), n: 0, armed: false, state: '', text: '' });
+  try { LIVE.wake = await navigator.wakeLock?.request('screen'); } catch {}   // ekran telefonu nie zgaśnie
+  LIVE.timer = setInterval(liveTick, 200);
+  render();
+}
+function liveStop() {
+  clearInterval(LIVE.timer); LIVE.timer = null;
+  LIVE.stream?.getTracks().forEach(t => t.stop()); LIVE.stream = null;
+  LIVE.wake?.release?.().catch(() => {}); LIVE.wake = null;
+  if (S.tab === 'skaner') render();
+}
+function liveMount() {
+  const box = $('#sc-live'); if (!box || !LIVE.stream) return;
+  box.innerHTML = `<div style="margin-top:12px;display:grid;gap:8px">
+    <div id="lv-frame" style="outline:3px solid var(--axis);border-radius:10px;overflow:hidden;background:#000;max-width:520px"></div>
+    <div id="lv-state" style="font-weight:600">${esc(LIVE.state ? '' : 'Uruchamiam kamerę…')}</div>
+    <div class="row" style="font-size:13px">
+      <button class="btn sm" data-act="liveShot">📸 Zeskanuj teraz</button>
+      <button class="btn sm" data-act="liveBase">Ustaw puste tło</button>
+      <label class="row muted">czułość <input type="range" id="lv-sens" min="4" max="20" value="${LIVE.sens}" style="width:110px" title="niżej = łapie słabszy kontrast, wyżej = mniej fałszywych zdjęć"></label>
+      <span class="muted">zeskanowane: <b id="lv-n">${LIVE.n}</b></span>
+    </div>
+    <p class="muted" style="font-size:12px;margin:0">Połóż telefon na stojaku aparatem w dół, włącz tryb przy pustej tacy. Kładź karty jedna po drugiej – każda nowa, nieruchoma karta to jedno zdjęcie (ok. 0,04 ¢). Zdejmowanie karty niczego nie skanuje. Ekran nie zgaśnie, dopóki tryb działa.</p>
+  </div>`;
+  LIVE.video.style.cssText = 'width:100%;display:block';
+  $('#lv-frame', box).appendChild(LIVE.video);
+  $('#lv-sens', box).addEventListener('input', e => { LIVE.sens = +e.target.value; ls.set('skarbiec_live_sens', LIVE.sens); });
+  liveSet(LIVE.state || 'wait', LIVE.text || 'Patrzę na tło – nie ruszaj tacy');
+}
+
 function vSkaner(v) {
   const ready = !!ls.get('skarbiec_ak');
   v.innerHTML = `
@@ -785,13 +880,16 @@ function vSkaner(v) {
       <div class="row" style="justify-content:center">
         <label class="btn primary">📷 Zrób zdjęcie<input type="file" accept="image/*" capture="environment" class="hide" id="sc-cam"></label>
         <label class="btn">🖼️ Wybierz zdjęcia<input type="file" accept="image/*" multiple class="hide" id="sc-files"></label>
+        <button class="btn" data-act="liveToggle">${LIVE.stream ? '⏹ Zatrzymaj tryb ciągły' : '🎥 Tryb ciągły (stojak)'}</button>
       </div>
       <p style="margin:10px 0 0;font-size:13px">albo przeciągnij tu pliki · wiele zdjęć naraz · 9 kart z segregatora w jednym zdjęciu to jedno zapytanie</p>
     </div>
+    <div id="sc-live"></div>
     <p class="muted" style="font-size:12px;margin:8px 0 0">Zdjęcia zapisuję w prywatnym repozytorium <b>${esc(PHOTOS.repo || '—')}</b>. Klucz API zostaje w tej przeglądarce i trafia tylko do Anthropic.</p>
   </div>
   <div class="card" style="margin-top:12px" id="sc-q"></div>
   <div class="card" style="margin-top:12px" id="sc-gal"></div>`;
+  liveMount();
   $('#sc-cam').addEventListener('change', e => { scAdd(e.target.files); e.target.value = ''; });
   $('#sc-files').addEventListener('change', e => { scAdd(e.target.files); e.target.value = ''; });
   const dz = $('#sc-drop');
@@ -1176,6 +1274,9 @@ const ACT = {
     await syncTargets();
     w.location.href = CM_EN_AUTO;
   },
+  liveToggle: () => LIVE.stream ? liveStop() : liveStart(),
+  liveShot: () => liveShot(true),
+  liveBase: () => { LIVE.base = null; LIVE.still = Date.now(); liveSet('wait', 'Patrzę na tło – nie ruszaj tacy'); },
   scApprove: () => scApprove(),
   scClear: () => { SC.jobs = SC.jobs.filter(j => !['gotowe', 'błąd'].includes(j.status)); scQueue(); },
   scDrop: a => { SC.jobs = SC.jobs.filter(j => j.id !== a.dataset.j); scQueue(); },
