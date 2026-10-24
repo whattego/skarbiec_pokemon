@@ -393,10 +393,12 @@ async function reverifyOnce() {
 const verifyStuck = h => (h.verify.cands || []).length > 0 && (h.verify.cands || []).every(id => S.cmnums?.[id]) && byNumber(h.verify, h.verify.cands.map(id => ({ idp: id }))).length !== 1;
 function verifyBanner() {
   const all = pendingVerify(); if (!all.length) return '';
-  const stuck = all.filter(verifyStuck), wait = all.length - stuck.length;
-  return `<div class="banner" style="margin-bottom:12px">${wait ? `🔎 ${wait} ${wait === 1 ? 'karta czeka' : 'kart czeka'} na weryfikację wersji (JP/promo). Rozszerzenie Chrome sprawdzi ich numery na Cardmarkecie i Skarbiec sam poprawi pozycje.
-    <button class="btn sm" data-act="enRefresh" data-scope="v" title="Tylko numery wersji – bez sprawdzania cen portfela">${enScript() ? 'Sprawdź teraz' : 'Zleć komputerowi'}</button>` : ''}
-    ${stuck.length ? `${wait ? '<br>' : ''}⚠️ ${stuck.length === 1 ? 'Dla 1 karty' : `Dla ${stuck.length} kart`} sprawdziłem już wszystkie wersje na Cardmarkecie i żadna nie ma numeru z karty – wybierz wersję ręcznie (✎ → „Wersja karty” albo wyszukaj w „+ Dodaj do portfela” po nazwie z Cardmarketu): ${stuck.map(h => `<b>${esc(baseName(h.name))}</b> ${esc([h.verify.set_code, h.verify.number].filter(Boolean).join(' '))}`).join(', ')}.` : ''}</div>`;
+  const stuck = all.filter(verifyStuck), wait = all.filter(h => !verifyStuck(h));
+  // każda karta z nazwą, numerem z karty i obecnym przypuszczeniem; klik = edycja (wybór wersji), 📷 = zdjęcie ze skanu
+  const chip = h => `<span class="row" style="display:inline-flex;gap:4px;margin:4px 6px 0 0"><button class="btn sm" data-act="edithold" data-uid="${h.uid}" title="Wybierz właściwą wersję">✎ <b>${esc(baseName(h.name))}</b> ${esc([h.verify.set_code, h.verify.number].filter(Boolean).join(' ') || h.no || '')}${h.lang === 'ja' ? ' · JP' : ''} <span class="muted">· teraz: ${esc(h.set || '?')}</span></button>${h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${h.uid}" title="Zdjęcie ze skanu">📷</button>` : ''}</span>`;
+  return `<div class="banner" style="margin-bottom:12px;display:block">${wait.length ? `<div>🔎 ${wait.length} ${wait.length === 1 ? 'karta czeka' : 'kart czeka'} na weryfikację wersji – rozszerzenie sprawdzi numery na Cardmarkecie i samo poprawi pozycje.
+    <button class="btn sm" data-act="enRefresh" data-scope="v" title="Tylko numery wersji – bez sprawdzania cen portfela">${enScript() ? 'Sprawdź teraz' : 'Zleć komputerowi'}</button></div><div>${wait.map(chip).join('')}</div>` : ''}
+    ${stuck.length ? `<div style="${wait.length ? 'margin-top:10px' : ''}">⚠️ ${stuck.length === 1 ? 'Ta karta wymaga' : 'Te karty wymagają'} ręcznego wyboru – sprawdziłem wszystkie wersje na Cardmarkecie i żadna nie ma numeru z karty (kliknij, żeby wybrać wersję):</div><div>${stuck.map(chip).join('')}</div>` : ''}</div>`;
 }
 async function applyVerify() {
   if (!S.cmnums || S.readOnly) return;
