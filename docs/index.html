@@ -1597,6 +1597,11 @@ async function scanJob(j) {
     try { await loadCatalog(); } catch {}
     j.cards = await Promise.all((out.cards || []).map(async det => {
       const [cands, crop] = await Promise.all([resolveCard(det), cropCard(j.file, det.box).catch(() => null)]);
+      // McDonald's: holo to osobny produkt CM o tej samej nazwie (droższy), nie Reverse Holo – przy karcie holo bierzemy go
+      if (cands[0]?.idp && /holo/.test(det.variant || '') && /mcdonald/i.test(S.catalog?.exp[catRow(cands[0].idp)?.[3]] || '')) {
+        const sib = siblingVersions(cands[0].idp);
+        if (sib.length === 2) { const r = sib[1]; cands[0] = { ...cands[0], idp: r[0], name: baseName(r[1]) }; det.variant = 'holo'; }
+      }
       // Reverse Holo tylko, gdy Cardmarket ma dla tej karty osobną cenę RH (np. karty LEGEND/ex są holo, ale nie „reverse”)
       return { det, cands, crop, cropUrl: crop && URL.createObjectURL(crop), sel: cands.length ? 0 : -1, holo: det.variant === 'reverse_holo' && !!catRow(cands[0]?.idp)?.[9], qty: 1, cost: '', on: !!cands[0]?.idp && det.confidence === 'high' && (cands.length === 1 || !!cands[0].exact || !!cands[0].verify) };
     }));
@@ -2117,11 +2122,20 @@ function formAddWatch(it) {
   });
 }
 
+// inne wersje tej samej karty w tym samym dodatku – CM trzyma np. holo z McDonald's jako osobny produkt o tej samej nazwie
+// (Bulbasaur MCD25 1: zwykły 0,70 €, holo 3,83 €), a nie jako Reverse Holo
+function siblingVersions(id) {
+  const r0 = catRow(id); if (!r0 || !S.catalog) return [];
+  const nm = baseName(r0[1]).toLowerCase();
+  return S.catalog.p.filter(r => r[3] === r0[3] && S.catalog.kinds[r[2]] === S.catalog.kinds[r0[2]] && baseName(r[1]).toLowerCase() === nm).sort((a, b) => (a[4] ?? 0) - (b[4] ?? 0));
+}
 function formHolding(base, existing) {
   const it = existing || base, m = itemMeta(it), p = nowPrice(it);
+  const sib = existing?.verify ? [] : siblingVersions(it.id), topId = sib.length > 1 ? sib.at(-1)[0] : null;
   const curCost = existing ? existing.cost_pln : '';
   modal(existing ? 'Edytuj pozycję' : 'Dodaj do portfela', `<p style="margin-top:0"><b>${esc(m.name)}</b><br><span class="muted">${esc(m.set)} · trend ${E(p?.trend)} (≈ ${P(p?.trend * fxNow())})</span></p>
     <div class="grid g2" style="gap:10px">
+      ${sib.length > 1 ? `<label class="f" style="grid-column:1/-1">Wersja karty (Cardmarket ma ${sib.length} produkty o tej nazwie w tym dodatku – np. zwykła i holo)<select id="h-alt">${sib.map(r => `<option value="${r[0]}" ${r[0] === it.id ? 'selected' : ''}>${esc(`${baseName(r[1])}${S.cmnums?.[r[0]] ? ' · ' + S.cmnums[r[0]].slice(0, 2).join(' ') : ''} · trend ${r[4] != null ? E(r[4]) : '—'}${r[0] === topId ? ' · najdroższa – zwykle holo / foil' : ''}${r[0] === it.id ? ' (obecnie)' : ''}`)}</option>`).join('')}</select></label>` : ''}
       <label class="f">Ilość<input type="number" id="h-q" value="${existing?.qty || 1}" min="1"></label>
       <label class="row" style="grid-column:1/-1;gap:8px"><input type="checkbox" id="h-holo" ${it.holo ? 'checked' : ''}> Reverse Holo <span class="muted" style="font-size:12px">${catRow(it.id)?.[9] ? `cena RH: ${E(catRow(it.id)[9])} (zwykła ${E(catRow(it.id)[4])})` : 'Cardmarket nie podaje osobnej ceny RH dla tej karty – zostanie cena zwykłej wersji'}</span></label>
       <label class="f">Data zakupu<input type="date" id="h-d" value="${existing?.date || todayISO()}" max="${todayISO()}"></label>
@@ -2141,6 +2155,8 @@ function formHolding(base, existing) {
       if ($('#h-cur', d).value === 'EUR') cost = +(cost * fxNow()).toFixed(2);
       const rec = existing || { uid: uid(), id: it.id, holo: !!it.holo, ...snapshotMeta(it), sold: null };
       Object.assign(rec, { qty: Math.max(1, +$('#h-q', d).value || 1), date: $('#h-d', d).value || null, cost_pln: cost, note: $('#h-n', d).value.trim(), holo: $('#h-holo', d).checked });
+      const alt = $('#h-alt', d);
+      if (alt && +alt.value !== rec.id) { const r = catRow(+alt.value); Object.assign(rec, { id: +alt.value, name: r ? r[1] : rec.name, set: (r && S.catalog.exp[r[3]]) || rec.set }); }
       const ver = $('#h-ver', d);
       if (ver && +ver.value !== rec.id) {   // wybrana ręcznie wersja = zweryfikowana
         const r = catRow(+ver.value);
