@@ -1123,8 +1123,8 @@ function vPortfel(v) {
     <div class="card stat"><div class="lbl">Wartość</div><div class="val">${P(pf.value)}</div><div class="note">≈ ${E(pf.value / fxNow())}${pf.bulkN ? ` · bez bulku (${pf.bulkN} ${plKart(pf.bulkN)} ≈ ${P(pf.bulkValue)})` : ''}</div></div>
     ${(() => {   // wartość wg najtańszych ofert NM z Cardmarketu (EN, dla kart JP – JP), sprawdzanych raz na dobę przez rozszerzenie
       const main = pf.active.filter(r => !isBulk(r)); let nm = 0, has = 0, rest = 0;
-      for (const r of main) { const e = enOf(r.h)?.min; if (e != null && !r.graded) { nm += e * (r.h.qty || 1) * fxNow(); has++; } else rest += r.value || 0; }
-      return `<div class="card stat"><div class="lbl">Wartość wg najtańszych NM</div><div class="val">${has ? P(nm + rest) : '—'}</div><div class="note">${has ? `≈ ${E((nm + rest) / fxNow())} · NM dla ${has}/${main.length} pozycji${rest ? ' · reszta wg średniej' : ''}` : 'rozszerzenie sprawdzi ceny NM przy najbliższym przebiegu'}${pf.cost ? ` · koszt ${P(pf.cost)}` : ''}</div></div>`;
+      for (const r of main) { const e = enOf(r.h)?.min; if (e != null && !r.graded && !nmWhy(r)) { nm += e * (r.h.qty || 1) * fxNow(); has++; } else rest += r.value || 0; }
+      return `<div class="card stat"><div class="lbl">Wartość wg najtańszych NM</div><div class="val">${has ? P(nm + rest) : '—'}</div><div class="note">${has ? `≈ ${E((nm + rest) / fxNow())} · NM dla ${has}/${main.length} pozycji${rest ? ' · reszta wg średniej' : ''}` : 'rozszerzenie sprawdzi ceny NM przy najbliższym przebiegu'}${has < main.length ? ` · <button class="btn sm" data-act="nmmissing" style="margin-top:4px">które bez NM?</button>` : ''}${pf.cost ? ` · koszt ${P(pf.cost)}` : ''}</div></div>`;
     })()}
     <div class="card stat"><div class="lbl">Zysk / strata</div><div class="val ${cls(plp)}">${pf.cost ? (pf.value - pf.cost >= 0 ? '+' : '−') + P(Math.abs(pf.value - pf.cost)) : '—'}</div><div class="note ${cls(plp)}">${arrow(plp)}${PC(plp)}</div></div>
     <div class="card stat"><div class="lbl">Można sprzedać bez PIT</div><div class="val">${pf.active.filter(r => r.free && r.free <= today && !isBulk(r)).length} / ${pf.nMain}</div><div class="note">pół roku od końca miesiąca zakupu</div></div>
@@ -2267,6 +2267,21 @@ function formAddWatch(it) {
 // (Bulbasaur MCD25 1: zwykły 0,70 €, holo 3,83 €), a nie jako Reverse Holo
 // kilka produktów CM o tej samej nazwie w dodatku (McDonald's: zwykła i holo) – znaczek, żeby pozycje się nie myliły;
 // najdroższa = zwykle holo/foil (Bulbasaur MCD25 1: 538778 zwykła, 538783 holo)
+// dlaczego pozycja nie ma ceny NM (kafelek „Wartość wg najtańszych NM”); null = ma cenę
+function nmWhy(r) {
+  const e = enOf(r.h), ja = isJaCard(r.h);
+  if (r.graded || r.h.grade?.by) return 'slab – Cardmarket nie ma cen kart ocenionych (wycena ręczna)';
+  if (!e) return 'jeszcze nie sprawdzona – rozszerzenie sprawdzi ją przy najbliższym przebiegu (dodana niedawno?)';
+  if (ja && e.lang !== 'ja') return 'karta japońska – czeka na sprawdzenie ofert japońskich NM (wcześniej sprawdzano angielskie)';
+  if (e.min == null) return `brak ofert ${ja ? 'japońskich' : 'angielskich'} NM od sprzedawców z ≥ 10 sprzedażami z UE${e.t ? ` (sprawdzone ${new Date(e.t).toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })})` : ''}`;
+  return null;
+}
+function nmMissing() {
+  const rows = holdingsCalc().active.filter(r => !isBulk(r) && nmWhy(r));
+  modal(`Bez ceny NM: ${rows.length} pozycji`, `<p class="muted" style="margin-top:0;font-size:13px">Te pozycje są w kafelku liczone wg średniej z cennika Cardmarketu.</p>
+    <table class="tbl">${rows.map(r => `<tr><td class="name"><div class="nm">${esc(r.m.name)}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}<small>${esc(r.m.set || '')}</small></div></td><td style="font-size:13px">${esc(nmWhy(r))}</td><td>${P(r.value)}</td></tr>`).join('')}</table>
+    <div class="row" style="margin-top:12px">${S.readOnly ? '' : `<button class="btn primary" data-act="enRefresh" data-scope="p" data-close>${enScript() ? 'Sprawdź teraz' : 'Zleć komputerowi'}</button>`}<button class="btn" data-close>Zamknij</button></div>`);
+}
 function verBadge(id) {
   const sib = siblingVersions(id); if (sib.length < 2) return '';
   const top = sib.at(-1)[0], i = sib.findIndex(r => r[0] === id);
@@ -2452,6 +2467,7 @@ const ACT = {
   addto: a => modal(a.dataset.mode === 'portfel' ? 'Dodaj do portfela' : 'Dodaj do watchlisty', pickerHTML(), d => mountPicker(d, it => { d.close(); a.dataset.mode === 'portfel' ? formHolding(it) : formAddWatch(it); })),
   sell: a => formSell(S.vault.portfolio.find(x => x.uid === a.dataset.uid)),
   pfmerge: () => mergeDupes(),
+  nmmissing: () => nmMissing(),
   edithold: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); formHolding(h, h); },
   rkind: a => { R.kind = a.dataset.k; document.querySelectorAll('[data-act="rkind"]').forEach(c => c.setAttribute('aria-pressed', c === a)); rynekResults(); },
   savegh: async () => {
