@@ -50,7 +50,9 @@ DEFAULT_SETTINGS = {
     "profit_steps": [50, 100, 200, 400],   # alert, gdy pozycja w portfelu zyskała tyle %
     "weekly_summary": True,
     "summary_weekday": 0,        # 0 = poniedziałek
+    "pf_metric": "avg30",        # wycena portfela: avg30 | avg7 | avg1 | trend (brak średniej → trend)
 }
+PF_METRICS = {"avg30": ("średnia 30 dni", 4), "avg7": ("średnia 7 dni", 3), "avg1": ("średnia z 1 dnia", 5), "trend": ("trend", 1)}
 
 
 # ---------------- szyfrowanie (zgodne z WebCrypto na stronie) ----------------
@@ -375,6 +377,17 @@ def main():
                 return row[1] if row[0] == d else None
         return None
 
+    def pf_price_on(key, d):
+        """Cena do wyceny portfela w dniu d: wybrana średnia, a gdy jej brak – trend."""
+        idx = PF_METRICS.get(settings.get("pf_metric"), PF_METRICS["avg30"])[1]
+        for row in reversed(hist.get(key, [])):
+            if row[0] <= d:
+                if row[0] != d:
+                    return None
+                v = row[idx] if len(row) > idx else None
+                return v if v is not None else row[1]
+        return None
+
     def series_sum(items, metric_idx=1):
         """Suma listy po dniach – tylko dni, w których znamy cenę każdej pozycji."""
         keys = [item_key(i) for i in items]
@@ -487,7 +500,7 @@ def main():
         if h.get("sold"):
             continue
         k = item_key(h)
-        cur = trend_on(k, day)
+        cur = pf_price_on(k, day)
         qty = h.get("qty", 1)
         cost = float(h.get("cost_pln") or 0)
         cost_pln += cost
@@ -503,7 +516,7 @@ def main():
             steps = [s for s in settings["profit_steps"] if gain >= s and s > done]
             if steps:
                 alert("profit", f"💰 {nm}: {fpct(gain)} zysku",
-                      f"Wartość wg trendu {pln(val)} przy koszcie {pln(cost)} ({qty} szt.). Rozważ sprzedaż części i odzyskanie kosztu.")
+                      f"Wartość ({PF_METRICS.get(settings.get('pf_metric'), PF_METRICS['avg30'])[0]}) {pln(val)} przy koszcie {pln(cost)} ({qty} szt.). Rozważ sprzedaż części i odzyskanie kosztu.")
                 st[f"pf:{h['uid']}:gain"] = max(steps)
         if h.get("date"):
             free = tax_free_from(h["date"])
