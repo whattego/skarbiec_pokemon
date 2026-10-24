@@ -251,6 +251,31 @@ const PHOTOS = {
       }
     });
   },
+  // usuwa wiele plików JEDNYM commitem (Git Data API: drzewo z sha:null) – zamiast commita na każde zdjęcie
+  async removeMany(paths, message) {
+    paths = [...new Set(paths)].filter(Boolean); if (!paths.length) return 0;
+    return this.enqueue(async () => {
+      if (!this.branch) this.branch = (await GH.call('', {}, this.repo)).default_branch || 'main';
+      for (let i = 0; ; i++) {
+        try {
+          const head = (await GH.call(`/git/ref/heads/${this.branch}`, {}, this.repo)).object.sha;
+          const all = new Set((await GH.call(`/git/trees/${head}?recursive=1`, {}, this.repo)).tree.filter(t => t.type === 'blob').map(t => t.path));
+          const del = paths.filter(p => all.has(p)); if (!del.length) return 0;
+          const base = (await GH.call(`/git/commits/${head}`, {}, this.repo)).tree.sha;
+          const tree = await GH.call('/git/trees', { method: 'POST', body: JSON.stringify({ base_tree: base, tree: del.map(path => ({ path, mode: '100644', type: 'blob', sha: null })) }) }, this.repo);
+          const commit = await GH.call('/git/commits', { method: 'POST', body: JSON.stringify({ message, tree: tree.sha, parents: [head] }) }, this.repo);
+          await GH.call(`/git/refs/heads/${this.branch}`, { method: 'PATCH', body: JSON.stringify({ sha: commit.sha }) }, this.repo);
+          del.forEach(p => { this.urls.delete(p); this.miss.set(p, Date.now()); });
+          return del.length;
+        } catch (e) { if (!/^GitHub (409|422)\b/.test(e.message) || i >= 3) throw e; await new Promise(r => setTimeout(r, 800 * (i + 1))); }   // gałąź przesunęła się – od nowa
+      }
+    });
+  },
+  async list(prefixes) {   // [{path, size}] plików w prywatnym repo o podanych prefiksach
+    if (!this.branch) this.branch = (await GH.call('', {}, this.repo)).default_branch || 'main';
+    const t = await GH.call(`/git/trees/${this.branch}?recursive=1`, {}, this.repo);
+    return t.tree.filter(x => x.type === 'blob' && prefixes.some(p => x.path.startsWith(p))).map(x => ({ path: x.path, size: x.size || 0 }));
+  },
   urls: new Map(), miss: new Map(),
   url(path) {   // blob: URL do wyświetlenia (repo jest prywatne, więc przez API z tokenem)
     if (Date.now() - (this.miss.get(path) || 0) < 300e3) return Promise.reject(new Error('brak pliku'));   // brak – nie pytaj co chwilę
@@ -769,6 +794,28 @@ function formGradeValue(h) {
       d.close(); await saveVault(`wycena slabu: ${m.name} ${gradeLbl(h)}`); render();
     };
   });
+}
+
+// ---------- Sprzątanie zdjęć ----------
+// Zdjęcia (foto/…) i wycinki (crop/…) są potrzebne tylko, dopóki wskazuje na nie jakaś pozycja portfela. Zdjęcia z kolejki skanera
+// (jeszcze nie zatwierdzone) zostają. Zdjęcia kart z Cardmarketu (img/<id>.jpg) to wspólna pamięć podręczna – nie ruszamy ich.
+// Uwaga: usunięte pliki zostają w historii git repozytorium (repo jest prywatne).
+const plZdj = n => n === 1 ? 'zdjęcie' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'zdjęcia' : 'zdjęć';
+function photoRefs() {
+  const used = new Set();
+  for (const h of S.vault.portfolio || []) { (h.photos || []).forEach(p => used.add(p)); if (h.crop) used.add(h.crop); }
+  for (const j of SC.jobs) { if (j.photo) used.add(j.photo); j.cards.forEach(c => c.cropPath && used.add(c.cropPath)); }
+  return used;
+}
+async function dropPhotos(paths, why) {   // usuń pliki, na które nic już nie wskazuje, i ich wpisy w galerii
+  if (S.readOnly || !GH.token || !PHOTOS.repo) return 0;
+  const used = photoRefs(), del = [...new Set(paths)].filter(p => p && !used.has(p));
+  if (!del.length) return 0;
+  const n = await PHOTOS.removeMany(del, `${why}: usunięto ${del.length} zdjęć`);
+  const gone = new Set(del), before = (S.vault.scans || []).length;
+  S.vault.scans = (S.vault.scans || []).filter(x => !gone.has(x.path));
+  if (S.vault.scans.length !== before) await saveVault('galeria: usunięte zdjęcia');
+  return n;
 }
 
 // ---------- Portfel ----------
@@ -1354,6 +1401,7 @@ function vUstawienia(v) {
     <label class="f">Klucz API Anthropic<input type="password" id="s-ak" value="${esc(ls.get('skarbiec_ak') || '')}" placeholder="sk-ant-…" autocomplete="off"></label>
     <label class="f">Prywatne repozytorium na zdjęcia<input type="text" id="s-prepo" value="${esc(PHOTOS.repo)}" placeholder="login/skarbiec-foto"></label>
     <div class="row"><button class="btn primary" data-act="saveai">Zapisz i sprawdź</button><span id="s-aires" class="muted"></span></div>
+    <div class="row"><button class="btn" data-act="photoclean" ${S.readOnly ? 'disabled' : ''}>🧹 Usuń zdjęcia kart, których nie ma w portfelu</button><span id="s-pcres" class="muted"></span></div>
   </div>
   <div class="card stack"><h2>Kiedy wysyłać alerty</h2>
     <div class="grid g2" style="gap:10px">
@@ -1530,7 +1578,15 @@ function formHolding(base, existing) {
       d.close(); await saveVault(`portfel: ${existing ? 'zmiana' : '+'} ${m.name}`); render();
     };
     if (existing) {
-      $('#h-del', d).onclick = async () => { if (!confirm('Usunąć tę pozycję z portfela?')) return; S.vault.portfolio = S.vault.portfolio.filter(x => x.uid !== existing.uid); d.close(); await saveVault('portfel: usunięto'); render(); };
+      $('#h-del', d).onclick = async () => {
+        if (!confirm('Usunąć tę pozycję z portfela? Jej zdjęcia (jeśli nie ma na nich innych kart z portfela) też zostaną usunięte.')) return;
+        S.vault.portfolio = S.vault.portfolio.filter(x => x.uid !== existing.uid); d.close();
+        if (await saveVault('portfel: usunięto')) {
+          try { const n = await dropPhotos([...(existing.photos || []), existing.crop], 'usunięta pozycja portfela'); if (n) toast(`Usunięto też ${n} ${plZdj(n)} tej karty.`); }
+          catch (e) { toast('Pozycja usunięta, ale zdjęć nie udało się usunąć: ' + e.message, 5000); }
+        }
+        render();
+      };
       const un = $('#h-unsell', d); if (un) un.onclick = async () => { existing.sold = null; d.close(); await saveVault('portfel: cofnięto sprzedaż'); render(); };
     }
   });
@@ -1692,6 +1748,17 @@ const ACT = {
     });
   },
   photo: a => openPhotos([a.dataset.path]),
+  photoclean: async () => {
+    const out = $('#s-pcres'); out.innerHTML = '<span class="spin"></span>';
+    try {
+      const used = photoRefs(), files = (await PHOTOS.list(['foto/', 'crop/'])).filter(f => !used.has(f.path));
+      if (!files.length) { out.textContent = 'Nie ma nieużywanych zdjęć.'; return; }
+      const mb = (files.reduce((a, f) => a + f.size, 0) / 1048576).toFixed(1).replace('.', ',');
+      if (!confirm(`Usunąć ${files.length} ${plZdj(files.length)} (${mb} MB), na które nie wskazuje żadna karta w portfelu?\n\nZdjęcia z kolejki skanera i zdjęcia kart z Cardmarketu zostają.`)) { out.textContent = ''; return; }
+      const n = await dropPhotos(files.map(f => f.path), 'sprzątanie zdjęć');
+      out.innerHTML = `<span class="up">✓ usunięto ${n} ${plZdj(n)}</span>`;
+    } catch (e) { out.innerHTML = `<span class="down">${esc(e.message)}</span>`; }
+  },
   gradeval: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.grade) formGradeValue(h); },
   pfgrp: a => { const c = pfClosed(), k = a.dataset.set; c.has(k) ? c.delete(k) : c.add(k); ls.set('skarbiec_pf_closed', JSON.stringify([...c])); render(); },
   holdphotos: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.photos?.length) openPhotos(h.photos, itemMeta(h).name); },
