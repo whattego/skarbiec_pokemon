@@ -1184,6 +1184,7 @@ function vOkazje(v) {
   v.innerHTML = `
   <div class="spread"><div><h1>OLX / Allegro</h1><p class="sub">Ogłoszenia z OLX, Allegro Lokalnie i Allegro porównane z najtańszą ofertą EN/NM na Cardmarket. Rozszerzenie sprawdza nowe co 10 min (Allegro co 30 min) i pisze na Discord, gdy oferta jest tańsza o próg.</p></div>
     <div class="row"><button class="btn primary" data-act="dealsrun">🔄 Sprawdź teraz</button><button class="btn" data-act="dealsthr">Próg: ${cfg.threshold}%</button><button class="btn" data-act="dealscfg">Wyszukiwania (${cfg.searches.length})</button></div></div>
+  ${dealsStatusHTML()}
   <div class="grid g4" style="margin:12px 0">
     <div class="card stat"><div class="lbl">Okazje (≤ −${cfg.threshold}%)</div><div class="val">${nDeal}</div><div class="note">porównanie z najtańszym EN/NM</div></div>
     <div class="card stat"><div class="lbl">Ogłoszeń w bazie</div><div class="val">${(d?.items || []).length}</div><div class="note">${(d?.items || []).filter(i => i.match).length} rozpoznanych i dopasowanych</div></div>
@@ -1209,6 +1210,17 @@ function vOkazje(v) {
     <p class="muted" style="font-size:12px;margin:8px 0 0">Różnica = cena ogłoszenia (za sztukę) vs najtańsza oferta EN/NM od zaufanego sprzedawcy na Cardmarket (≥ 10 sprzedaży, UE), przeliczona po kursie NBP ${String(fx.toFixed(4)).replace('.', ',')}. Do czasu sprawdzenia Cardmarketu porównanie jest z trendem (wszystkie języki) – powiadomienia przychodzą tylko po porównaniu z EN/NM. Karty JP, sloty i loty nie są porównywane automatycznie. Zawsze sprawdź zdjęcia i sprzedawcę – tytuły bywają mylące.</p>
   </div>`;
 }
+// stan rozszerzenia (deals.js) – przez en.js na tej stronie: dataset.skarbiecDeals + zdarzenie skarbiec-deals-status
+function dealsStatusHTML() {
+  const ver = document.documentElement.dataset.skarbiecEn || '';
+  if (!enScript()) return '<div class="banner" style="margin-top:12px">Ta przeglądarka nie ma rozszerzenia „Skarbiec – Cardmarket” – okazje zbiera komputer z rozszerzeniem („Sprawdź teraz” zleci mu to).</div>';
+  if (ver < 'ext-1.1') return '<div class="banner" style="margin-top:12px">⚠️ Rozszerzenie ma starą wersję – w <code>chrome://extensions</code> kliknij ↻ przy „Skarbiec – Cardmarket”, potem odśwież tę stronę.</div>';
+  let s = null; try { s = JSON.parse(document.documentElement.dataset.skarbiecDeals || 'null'); } catch {}
+  if (!s) return '<p class="muted" style="margin:10px 0 0;font-size:13px">Rozszerzenie: jeszcze nie sprawdzało (pierwszy raz do 10 min po przeładowaniu albo „Sprawdź teraz”).</p>';
+  const col = { run: 'muted', ok: 'up', warn: '', err: 'down' }[s.state] ?? 'muted';
+  return `<p class="${col}" style="margin:10px 0 0;font-size:13px">${s.state === 'run' ? '<span class="spin"></span> ' : s.state === 'err' ? '⚠️ ' : ''}Rozszerzenie: ${esc(s.text)} <span class="muted">· ${agoPL(new Date(s.t).toISOString())}</span></p>`;
+}
+document.addEventListener('skarbiec-deals-status', () => { if (S.tab === 'okazje' && !document.querySelector('dialog[open]')) { const y = scrollY; render(); scrollTo(0, y); } });
 function formDealsCfg() {
   const cfg = dealsCfgNow();
   modal('Wyszukiwania OLX / Allegro', `<p class="muted" style="margin-top:0;font-size:13px">Jedno wyszukiwanie w linii – tak, jak wpisujesz w OLX/Allegro. Każde to kilka zapytań co 10 min, więc lepiej konkretnie (postać, dodatek, „psa 10”) niż samo „pokemon”.</p>
