@@ -155,7 +155,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
    kluczem z twojego hasła (PBKDF2, 310 000 iteracji). Hasło nigdy nie opuszcza przeglądarki.
    ============================================================ */
 const ITER = 310000;
-const DEFAULT_SETTINGS = { drop_alert_pct: 10, card_drop_alert_pct: 25, dip_alert_pct: 20, profit_steps: [50, 100, 200, 400], weekly_summary: true, summary_weekday: 0, pf_metric: 'avg30', sell_min_pct: 90, track_min_eur: 1, cm_fee_pct: 5 };
+const DEFAULT_SETTINGS = { drop_alert_pct: 10, card_drop_alert_pct: 25, dip_alert_pct: 20, profit_steps: [50, 100, 200, 400], weekly_summary: true, summary_weekday: 0, pf_metric: 'avg30', sell_min_pct: 90, track_min_eur: 0.5, cm_fee_pct: 5 };
 const KIND = { S: 'Karta', D: 'Display / box', E: 'ETB', B: 'Booster', O: 'Inny sealed' };
 const S = { pw: null, vault: null, vaultSha: null, vaultSalt: null, market: null, meta: null, catalog: null, catMap: null, tab: 'pulpit', wl: null, charts: [], readOnly: true, branch: null };
 
@@ -977,6 +977,21 @@ async function dropPhotos(paths, why) {   // usuń pliki, na które nic już nie
   return n;
 }
 
+// Własne zdjęcia i wycinki kart bulk (poniżej progu) – decyzja użytkownika: trzyma tylko zdjęcia kart ≥ 0,5 €.
+// Pozycje tracą `photos`/`crop`, a pliki, na które nie wskazuje już żadna droższa karta (np. strona segregatora), są usuwane.
+async function bulkPhotoClean() {
+  if (S.readOnly) return toast('Tryb tylko do odczytu – dodaj token GitHub w Ustawieniach.', 4500);
+  const rows = holdingsCalc().active.filter(r => isBulk(r) && (r.h.photos?.length || r.h.crop));
+  if (!rows.length) return toast(`Żadna karta poniżej ${String(bulkMin()).replace('.', ',')} € nie ma własnego zdjęcia.`, 4000);
+  const paths = [...new Set(rows.flatMap(r => [...(r.h.photos || []), r.h.crop].filter(Boolean)))];
+  if (!confirm(`Usunąć własne zdjęcia i wycinki ${rows.length} kart bulk (poniżej ${String(bulkMin()).replace('.', ',')} €)?\n\nZdjęcia, na których są też droższe karty, zostaną. Karty zostają w portfelu z obrazkiem z TCGdex/Cardmarketu.`)) return;
+  for (const r of rows) { delete r.h.photos; delete r.h.crop; }
+  if (!await saveVault(`bulk: bez własnych zdjęć (${rows.length} kart)`)) return;
+  try { const n = await dropPhotos(paths, 'zdjęcia kart bulk'); toast(`Usunięto ${n} ${plZdj(n)} kart bulk ✓`, 4000); }
+  catch (e) { toast('Karty bez zdjęć zapisane, ale pliki nie zostały usunięte: ' + e.message, 6000); }
+  render();
+}
+
 // ---------- Portfel ----------
 // pozycje pogrupowane po dodatkach (jak w segregatorze): w grupie po numerze karty, grupy zwijane (localStorage)
 const plKart = n => n === 1 ? 'karta' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'karty' : 'kart';
@@ -1036,7 +1051,7 @@ function vPortfel(v) {
     <div class="tblw" style="margin-top:8px"><table class="tbl">
     <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Najtaniej EN/NM / szt.</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
     ${pfGroups(pf.active).map(g => `<tr class="grp click" data-act="pfgrp" data-set="${esc(g.bulk ? '+bulk' : g.set)}"><td colspan="9"><span class="muted">${g.open ? '▾' : '▸'}</span> <b>${esc(g.set)}</b>${g.lang ? ' <span class="badge">JP</span>' : ''}
-      <span class="muted">· ${g.n} ${plKart(g.n)} · </span>${P(g.value)}${g.cost ? ` <span class="${cls(pct(g.value, g.cost))}">${PC(pct(g.value, g.cost))}</span>` : ''}</td></tr>` + (g.open ? g.rows.map(r => `<tr>
+      <span class="muted">· ${g.n} ${plKart(g.n)} · </span>${P(g.value)}${g.cost ? ` <span class="${cls(pct(g.value, g.cost))}">${PC(pct(g.value, g.cost))}</span>` : ''}${g.bulk && !S.readOnly && g.rows.some(r => r.h.photos?.length || r.h.crop) ? ` <button class="btn sm" data-act="bulkphotos" style="margin-left:8px">🧹 Usuń moje zdjęcia bulk</button>` : ''}</td></tr>` + (g.open ? g.rows.map(r => `<tr>
       <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${r.h.no && !S.cmnums?.[r.h.id] ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}${r.h.grade?.by ? ` <span class="badge good" title="${esc(r.h.grade.cert ? 'certyfikat ' + r.h.grade.cert : 'karta oceniona')}">${esc(gradeLbl(r.h))}</span>` : ''}${{ listed: ` <span class="badge good" title="${esc(sellTip(r.h))}">CM ${E(S.listed?.[r.h.uid]?.price)}${S.listed?.[r.h.uid]?.miss ? ' ?' : ''}</span>`, wait: ' <span class="badge" title="Rozszerzenie wystawi ją przy najbliższym przebiegu">na sprzedaż – czeka</span>', err: ` <span class="badge warn" title="${esc(S.listed?.[r.h.uid]?.err || '')}"><span class="dot"></span>wystawienie nie wyszło</span>` }[sellState(r.h)] || ''}${r.h.verify ? ' <span class="badge warn" title="Wersję (dodatek) poprawi rozszerzenie po sprawdzeniu numeru na Cardmarkecie"><span class="dot"></span>do weryfikacji</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set ? '' : KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
       <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.h.grade?.by ? `<br><small class="${gradeDue(r.h) ? 'down' : 'muted'}">${r.graded ? `wycena ręczna ${dPL(r.h.grade.t)}${gradeDue(r.h) ? ' · do aktualizacji' : ''}` : 'wpisz wycenę slabu'}</small>${r.graded && r.raw != null ? `<br><small class="muted" title="Cena karty bez gradingu (${PF_METRICS[pfMetric()][0]})">bez gradingu ${P(r.raw)}</small>` : ''}` : r.fb ? '<br><small class="muted" title="Cardmarket nie podaje dla tej pozycji wybranej średniej">wg trendu</small>' : r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
       <td>${enOf(r.h)?.min != null ? `${E(enOf(r.h).min)}<br><small class="muted">≈ ${P(enOf(r.h).min * fxNow())}</small>` : '<span class="muted">—</span>'}</td>
@@ -1432,9 +1447,9 @@ async function scanJob(j) {
     liveDupScan();
   } catch (e) { j.status = 'błąd'; j.err = aiError(e); }
   scQueue();
-  // tryb ciągły (1 karta = 1 zdjęcie): przy bulku zapisujemy tylko wycinek (~60 KB) zamiast pełnego zdjęcia (~400 KB) – inaczej
-  // tysiące commonów zapchałyby repo zdjęć; pełne zdjęcie zawsze można dopisać przyciskiem „Zapisz zdjęcie”
-  if (j.status === 'gotowe' && j.live && j.cards.length && j.cards.every(c => c.crop && (scPrice(c.cands[c.sel], c.holo) ?? 0) < bulkMin())) { j.cropOnly = true; scQueue(); }
+  // decyzja użytkownika 24.10.2026: własne zdjęcia tylko kart ≥ progu bulk (0,5 €) – zdjęcie, na którym są same tańsze karty,
+  // nie trafia do repo (w portfelu obrazek z TCGdex / Cardmarketu); zawsze można je dopisać przyciskiem „Zapisz zdjęcie”
+  if (j.status === 'gotowe' && j.cards.length && j.cards.every(c => scIsBulk(c))) { j.noPhoto = true; scQueue(); }
   else if (j.status === 'gotowe') savePhoto(j);
 }
 // Tryb ciągły: ta sama karta na dwóch kolejnych zdjęciach w ciągu 30 s to prawie na pewno podwójne zdjęcie –
@@ -1464,6 +1479,8 @@ async function savePhotoNow(j) {
   } catch (e) { j.photoErr = /^GitHub 40[34]\b/.test(e.message) ? `Brak dostępu do ${PHOTOS.repo} – dodaj to repozytorium do tokenu GitHub.` : e.message; }
   scQueue();
 }
+// karta ze skanera poniżej progu bulk (z ceną z cennika; bez dopasowania/ceny – nie wiadomo, więc nie bulk)
+function scIsBulk(c) { const p = scPrice(c.cands[c.sel], c.holo); return bulkMin() > 0 && p != null && p < bulkMin(); }
 function scPump() {
   for (const j of SC.jobs) { if (SC.busy >= 2) break; if (j.status === 'czeka') { SC.busy++; scanJob(j).finally(() => { SC.busy--; scPump(); }); } }
 }
@@ -1660,7 +1677,7 @@ function scQueue() {
   ${SC.jobs.map(j => `<div class="job"><img src="${j.url}" alt="">
     <div style="min-width:0">
       <div class="spread"><div style="font-size:13px">${STAT[j.status] || (j.status === 'błąd' ? `<span class="down">${esc(j.err)}</span>` : `${j.cards.length ? `${j.cards.length} kart` : 'Nie znalazłem kart na zdjęciu.'}${j.cost ? ` · ${(j.cost * 100).toFixed(3).replace('.', ',')} ¢` : ''}`)}
-        ${j.photo ? ' · <span class="up">📁 zapisane</span>' : j.cropOnly ? ' · <span class="muted" title="Bulk – zapiszę tylko wycinek karty po dodaniu do portfela">✂️ tylko wycinek</span>' : j.photoErr ? ` · <span class="down">${esc(j.photoErr)}</span>` : ''}${j.dup ? ' · <span class="badge warn"><span class="dot"></span>możliwy duplikat poprzedniego zdjęcia – odznaczone</span>' : ''}</div>
+        ${j.photo ? ' · <span class="up">📁 zapisane</span>' : j.noPhoto ? ` · <span class="muted" title="Same karty poniżej ${String(bulkMin()).replace('.', ',')} € – bez własnego zdjęcia (obrazek z TCGdex/Cardmarketu)">bulk – bez zdjęcia</span>` : j.photoErr ? ` · <span class="down">${esc(j.photoErr)}</span>` : ''}${j.dup ? ' · <span class="badge warn"><span class="dot"></span>możliwy duplikat poprzedniego zdjęcia – odznaczone</span>' : ''}</div>
         <div class="row">${j.status === 'błąd' ? `<button class="btn sm" data-act="scRetry" data-j="${j.id}">Ponów</button>` : ''}${j.status === 'gotowe' && !j.photo && !S.readOnly ? `<button class="btn sm" data-act="scPhoto" data-j="${j.id}">Zapisz zdjęcie</button>` : ''}<button class="btn sm" data-act="scDrop" data-j="${j.id}" title="Usuń z kolejki">×</button></div></div>
       ${j.cards.map((c, i) => { const k = c.cands[c.sel], pr = scPrice(k, c.holo); return `<div class="sc-card">
         <input type="checkbox" data-j="${j.id}" data-c="${i}" data-f="on" ${c.on ? 'checked' : ''} ${k ? '' : 'disabled'} aria-label="Dodaj">
@@ -1694,7 +1711,7 @@ async function scApprove() {
   SC.saving = true; scQueue();
   try {
     // ścieżki wycinków planujemy teraz (pozycja portfela od razu na nie wskazuje), pliki wysyłamy po zapisie
-    for (const { j, c, card } of sel) if ((!card.img || j.cropOnly) && c.crop && !c.cropPath && !c.cropPlan && !S.readOnly) c.cropPlan = `crop/${todayISO().slice(0, 7)}/${uid()}.jpg`;
+    for (const { j, c, card } of sel) if (!card.img && !scIsBulk(c) && c.crop && !c.cropPath && !c.cropPlan && !S.readOnly) c.cropPlan = `crop/${todayISO().slice(0, 7)}/${uid()}.jpg`;
     const tasks = sel.map(({ j, c, card }) => {
       const r = catRow(card.idp);
       const rec = { uid: uid(), id: card.idp, holo: !!c.holo, name: r ? r[1] : card.name, set: (r && S.catalog.exp[r[3]]) || card.set, kind: 'S',
@@ -1711,7 +1728,7 @@ async function scApprove() {
     S.vault.scans = [...(S.vault.scans || []).filter(s => !scans.has(s.path)), ...scans.values()].slice(-500);
     if (!await saveVault(`skaner: +${tasks.length} kart`)) return;
     sel.forEach(({ c }) => { c.on = false; c.added = true; });
-    toast(`Dodano ${tasks.length} kart do portfela ✓${tasks.some(t => t.c.cropPlan && !t.c.cropPath) || tasks.some(t => !t.j.photo && !t.j.cropOnly) ? ' Zdjęcia dosyłam w tle.' : ''}`, 4000);
+    toast(`Dodano ${tasks.length} kart do portfela ✓${tasks.some(t => t.c.cropPlan && !t.c.cropPath) || tasks.some(t => !t.j.photo && !t.j.noPhoto) ? ' Zdjęcia dosyłam w tle.' : ''}`, 4000);
     const recs = tasks.map(t => t.rec);
     // karty JP/promo do weryfikacji albo bez zdjęcia z Cardmarketu: na telefonie zleć komputerowi, na komputerze uruchom od razu
     if (recs.some(r => r.verify || !r.img)) { if (enScript()) ACT.enRefresh(); else requestDesktop('en'); }
@@ -1720,13 +1737,13 @@ async function scApprove() {
     toast('Nie dodano do portfela: ' + e.message, 6000);
   } finally {
     SC.saving = false;
-    SC.jobs = SC.jobs.filter(j => j.cards.some(c => !c.added && c.cands.length) || j.status !== 'gotowe' || (SC.upl && !j.photo && !j.cropOnly));
+    SC.jobs = SC.jobs.filter(j => j.cards.some(c => !c.added && c.cands.length) || j.status !== 'gotowe' || (SC.upl && !j.photo && !j.noPhoto));
     render();
   }
 }
 // zdjęcia (jeśli nie wysłały się przy skanowaniu) i wycinki po kolei; na końcu jeden zapis portfela z uzupełnionymi ścieżkami
 async function scUploadAfter(tasks) {
-  const jobs = [...new Set(tasks.map(t => t.j))].filter(j => !j.photo && !j.cropOnly);
+  const jobs = [...new Set(tasks.map(t => t.j))].filter(j => !j.photo && !j.noPhoto);
   const crops = tasks.filter(t => t.c.cropPlan && !t.c.cropPath);
   const total = jobs.length + crops.length; if (!total) return;
   SC.upl = { done: 0, total, err: 0 }; scQueue();
@@ -1786,6 +1803,7 @@ function vUstawienia(v) {
     <label class="f">Prywatne repozytorium na zdjęcia<input type="text" id="s-prepo" value="${esc(PHOTOS.repo)}" placeholder="login/skarbiec-foto"></label>
     <div class="row"><button class="btn primary" data-act="saveai">Zapisz i sprawdź</button><span id="s-aires" class="muted"></span></div>
     <div class="row"><button class="btn" data-act="photoclean" ${S.readOnly ? 'disabled' : ''}>🧹 Usuń zdjęcia kart, których nie ma w portfelu</button><span id="s-pcres" class="muted"></span></div>
+    <div class="row"><button class="btn" data-act="bulkphotos" ${S.readOnly ? 'disabled' : ''}>🧹 Usuń moje zdjęcia kart bulk (poniżej ${String(bulkMin()).replace('.', ',')} €)</button></div>
   </div>
   <div class="card stack"><h2>Kiedy wysyłać alerty</h2>
     <div class="grid g2" style="gap:10px">
@@ -1793,7 +1811,7 @@ function vUstawienia(v) {
       <label class="f">Pozycja spadła w 1 dzień co najmniej (%)<input type="number" id="s-card" value="${st.card_drop_alert_pct}" min="1"></label>
       <label class="f">Pozycja poniżej szczytu z 90 dni o (%)<input type="number" id="s-dip" value="${st.dip_alert_pct}" min="1"></label>
       <label class="f">Zysk w portfelu – progi (%)<input type="text" id="s-profit" value="${esc(st.profit_steps.join(', '))}"></label>
-      <label class="f">Bulk: karty portfela tańsze niż (€) – bez historii, alertów i pełnych zdjęć<input type="number" id="s-bulk" value="${st.track_min_eur ?? 1}" min="0" step="0.1"></label>
+      <label class="f">Bulk: karty portfela tańsze niż (€) – bez historii, alertów i własnych zdjęć<input type="number" id="s-bulk" value="${st.track_min_eur ?? 0.5}" min="0" step="0.1"></label>
       <label class="f">Prowizja Cardmarketu od sprzedaży (%) – do wyliczenia zysku<input type="number" id="s-fee" value="${st.cm_fee_pct ?? 5}" min="0" max="30" step="0.1"></label>
       <label class="f">Wystawiając na Cardmarket, nie schodź poniżej (% trendu)<input type="number" id="s-sellmin" value="${st.sell_min_pct ?? 90}" min="10" max="300"></label>
       <label class="f">Podsumowanie tygodnia<select id="s-sumday">${['poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota', 'niedziela'].map((d, i) => `<option value="${i}" ${+st.summary_weekday === i && st.weekly_summary ? 'selected' : ''}>${d}</option>`).join('')}<option value="-1" ${!st.weekly_summary ? 'selected' : ''}>wyłączone</option></select></label>
@@ -2149,6 +2167,7 @@ const ACT = {
     } catch (e) { out.innerHTML = `<span class="down">${esc(e.message)}</span>`; }
   },
   sellcm: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h) formSellCM(h); },
+  bulkphotos: (a, e) => { e?.stopPropagation(); bulkPhotoClean(); },
   gradeval: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.grade) formGradeValue(h); },
   wlrange: a => { ls.set('skarbiec_wl_range', a.dataset.r); render(); },
   mwadd: a => marketCheck([+a.dataset.id]),
@@ -2234,6 +2253,8 @@ async function unlock(pw, remember) {
   loadEN().then(async () => { await loadCatalog().catch(() => {}); applyVerify(); syncVerify(); if (S.en?.size && ['watch', 'portfel'].includes(S.tab)) render(); });
   enLiveRefresh();
   loadCatalog().catch(() => {}).then(syncTargets);
+  // decyzja użytkownika 24.10.2026: próg bulk 0,5 € zamiast 1 € – raz przestaw zapisane ustawienie
+  if (S.vault.settings?.track_min_eur === 1 && !S.vault.settings.bulk05 && !S.readOnly) { S.vault.settings.track_min_eur = 0.5; S.vault.settings.bulk05 = true; saveVault('próg bulk 0,5 €'); }
 }
 
 // zakładka w adresie (#watch, #portfel, #watch/<idListy>…): odświeżenie zostawia cię w tym samym miejscu, działa „Wstecz”

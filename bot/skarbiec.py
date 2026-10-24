@@ -51,7 +51,7 @@ DEFAULT_SETTINGS = {
     "weekly_summary": True,
     "summary_weekday": 0,        # 0 = poniedziałek
     "pf_metric": "avg30",        # wycena portfela: avg30 | avg7 | avg1 | trend (brak średniej → trend)
-    "track_min_eur": 1.0,        # karty z portfela tańsze niż tyle (trend) = bulk: bez dziennej historii i alertów, wartość z dzisiejszego cennika
+    "track_min_eur": 0.5,        # karty z portfela tańsze niż tyle (trend) = bulk: bez dziennej historii i alertów, wartość z dzisiejszego cennika
 }
 GRADE_REMIND_D = 30   # przypomnienie o ręcznej wycenie slabu (PSA/CGC…) co tyle dni
 PF_METRICS = {"avg30": ("średnia 30 dni", 4), "avg7": ("średnia 7 dni", 3), "avg1": ("średnia z 1 dnia", 5), "trend": ("trend", 1)}
