@@ -362,10 +362,20 @@ async function reverifyOnce() {
   if (S.readOnly || !S.catalog) return;
   let n = 0;
   for (const h of pendingVerify()) {
-    if (h.verify.v === 2) continue;
-    const cands = catalogCandidates({ name: h.lang === 'ja' ? 'あ' : '', name_en: h.verify.name_en || baseName(h.name), number: h.verify.number, set_code: h.verify.set_code, language: h.lang || 'en' }, 30);
-    h.verify.v = 2; n++;
+    if (h.verify.v === 4) continue;
+    if (h.verify.set_code) await jpCodeExp(h.verify.set_code);
+    const c = { name: h.lang === 'ja' ? 'あ' : '', name_en: h.verify.name_en || baseName(h.name), number: h.verify.number, set_code: h.verify.set_code, language: h.lang || 'en' };
+    const cands = catalogCandidates(c, 30);
+    h.verify.v = 4; n++;
+    const bn = byCodeNumber(c);
+    if (bn) { Object.assign(h, { id: bn[0], name: bn[1], set: S.catalog.exp[bn[3]] || h.set }); delete h.verify; continue; }
     if (!cands.length) continue;
+    const ce = S.codeExp?.[String(h.verify.set_code || '').trim()];
+    const pick = ce != null ? pickInExp(cands, ce, { number: h.verify.number, set_total: (h.no || '').split('/')[1] || '' }) : null;
+    if (pick) {   // pewne z kodu setu – od razu zweryfikowana
+      const r = catRow(pick.idp);
+      Object.assign(h, { id: pick.idp, name: r ? r[1] : h.name, set: (r && S.catalog.exp[r[3]]) || h.set }); delete h.verify; continue;
+    }
     const r = catRow(cands[0].idp);
     Object.assign(h, { id: cands[0].idp, name: r ? r[1] : h.name, set: (r && S.catalog.exp[r[3]]) || h.set });
     h.verify.cands = cands.map(x => x.idp);
@@ -1030,7 +1040,8 @@ async function bulkPhotoClean() {
 const plKart = n => n === 1 ? 'karta' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'karty' : 'kart';
 // bulk: karty tańsze niż track_min_eur (bot nie trzyma ich historii) – w portfelu jedna zwinięta grupa
 const bulkMin = () => +({ ...DEFAULT_SETTINGS, ...(S.vault?.settings || {}) }).track_min_eur || 0;
-const isBulk = r => bulkMin() > 0 && !r.graded && r.p?.trend != null && r.p.trend < bulkMin();
+// bulk wg tej samej kwoty, którą widać w portfelu (za sztukę, €): karta do weryfikacji liczy się po minimum z możliwych wersji
+const isBulk = r => { if (!(bulkMin() > 0) || r.graded || r.value == null) return false; return r.value / (r.h.qty || 1) / fxNow() < bulkMin(); };
 const pfSort = () => ls.get('skarbiec_pf_sort') || 'name';
 const pfClosed = () => { try { return new Set(JSON.parse(ls.get('skarbiec_pf_closed') || '[]')); } catch { return new Set(); } };
 const cardNoKey = r => (S.cmnums?.[r.h.id]?.[1] || String(r.h.no || '').split('/')[0] || '').toUpperCase();   // „030”, „TG23”
@@ -1410,15 +1421,75 @@ const JA_SCRIPT = /[぀-ヿ一-鿿]/;
 // w cenniku Cardmarketu po angielskiej nazwie, a wersję wybieramy po kodzie i numerze z tytułu produktu („Mew ex (m6a 129)”),
 // które zbiera rozszerzenie (S.cmnums). Bez numerów w pamięci – najlepsze przypuszczenie + weryfikacja później.
 // loose = numer wpisany ręcznie w wyszukiwarce: ufamy numerowi, nazwa nie musi pasować.
+// Kod setu z japońskiej karty („M3”, „M1S”, „SV2a”) → dodatek Cardmarketu: TCGdex JA zna zestaw o tym id, a jego karty mają
+// idProduct CM (M3 → Nihil Zero, M1S → Mega Symphonia, SV2a → Pokémon Card 151 – sprawdzone 24.10.2026). Gdy wskaże wersję
+// chińską/koreańską, bierzemy dodatek o tej samej nazwie bez dopisku. Wynik w S.codeExp i localStorage.
+S.codeExp = (() => { try { return JSON.parse(ls.get('skarbiec_codeexp') || '{}'); } catch { return {}; } })();
+// przesunięcie numeru w dodatku: produkty CM w dodatku są dodawane po kolei, a przed kartą nr 1 bywa kilka produktów specjalnych
+// (Nihil Zero: numer + 5 = pozycja produktu po idProduct – sprawdzone na 4 kartach 24.10.2026); liczone z kart TCGdex (localId + idProduct)
+S.codeOff = (() => { try { return JSON.parse(ls.get('skarbiec_codeoff') || '{}'); } catch { return {}; } })();
+const expSorted = expId => S.catalog.p.filter(r => r[3] === expId && S.catalog.kinds[r[2]] === 'S').sort((a, b) => a[0] - b[0]);
+// produkt po kodzie setu i numerze z karty (pewny dodatek + znane przesunięcie) – niezależnie od (często błędnie odczytanej) nazwy
+function byCodeNumber(c) {
+  const k = String(c.set_code || '').trim(), ce = S.codeExp?.[k], off = S.codeOff?.[k], no = parseInt(String(c.number || '').replace(/\D/g, ''), 10);
+  if (ce == null || off == null || !(no > 0)) return null;
+  return expSorted(ce)[no + off - 1] || null;
+}
+async function jpCodeExp(code) {
+  const k = String(code || '').trim(); if (!k || k.length > 8 || !S.catalog) return null;
+  if (k in S.codeExp) return S.codeExp[k];
+  let exp = null;
+  try {
+    const set = await td(`ja/sets/${encodeURIComponent(k)}`);
+    if (set?.cards?.length) {
+      const votes = {}, seen = [];
+      for (const c of set.cards.slice(0, 6)) { const f = await td(`ja/cards/${encodeURIComponent(c.id)}`); const r = catRow(f?.pricing?.cardmarket?.idProduct); if (r) { votes[r[3]] = (votes[r[3]] || 0) + 1; seen.push([r, parseInt(f.localId, 10)]); } }
+      const best = Object.entries(votes).sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (best != null) {   // przesunięcie: pozycja produktu w dodatku − numer karty (najczęstsza wartość)
+        const list = expSorted(+best), offs = {};
+        for (const [r, no] of seen) if (r[3] === +best && no > 0) { const pos = list.findIndex(x => x[0] === r[0]) + 1; if (pos > 0) offs[pos - no] = (offs[pos - no] || 0) + 1; }
+        const o = Object.entries(offs).sort((a, b) => b[1] - a[1])[0];
+        if (o && o[1] >= 2) { S.codeOff[k] = +o[0]; ls.set('skarbiec_codeoff', JSON.stringify(S.codeOff)); }
+      }
+      if (best != null) {
+        exp = +best;
+        const nm = S.catalog.exp[exp] || '';
+        if (/chinese|korean|indonesian|thai/i.test(nm)) {   // TCGdex JA bywa przypięte do wersji CN – szukamy japońskiej
+          const base = nm.replace(/\s*(simplified|traditional)?\s*(chinese|korean|indonesian|thai)(\s*&\s*\w+)?\s*$/i, '').trim();
+          const alt = Object.entries(S.catalog.exp).find(([id, n]) => n === base || n === base + ' JP');
+          exp = alt ? +alt[0] : null;
+        }
+      }
+    }
+  } catch {}
+  S.codeExp[k] = exp; ls.set('skarbiec_codeexp', JSON.stringify(S.codeExp));
+  return exp;
+}
+// kilka wersji tej samej karty w pewnym dodatku (zwykła / AR / SAR): produkty CM w dodatku są dodawane w kolejności numerów,
+// więc numer ≤ liczby kart w secie = najwcześniejszy produkt (wersja zwykła); powyżej – gdy została jedna późniejsza wersja, to ona
+function pickInExp(cands, ce, c) {
+  const inExp = cands.filter(x => catRow(x.idp)?.[3] === ce).sort((a, b) => a.idp - b.idp);
+  if (inExp.length === 1) return inExp[0];
+  const no = parseInt(String(c.number || '').replace(/\D/g, ''), 10), tot = parseInt(c.set_total, 10);
+  if (!inExp.length || !(no > 0) || !(tot > 0)) return null;
+  if (no <= tot) return inExp[0];
+  return inExp.length === 2 ? inExp[1] : null;
+}
 async function resolveCard(c, loose) {
   const ja = c.language === 'ja' || JA_SCRIPT.test(c.name);
   if (!ja) {
     const r = await resolveIn('en', c, loose);
     if (r.some(x => x.idp)) return r.map(x => ({ ...x, lang: 'en' }));
   }
+  if (c.set_code) await jpCodeExp(c.set_code);
   const cands = catalogCandidates(c);
   const exact = byNumber(c, cands);
   if (exact.length) return exact;
+  // dodatek pewny z kodu setu i w nim jedna karta o tej nazwie → wersja pewna, bez weryfikacji
+  const ce = S.codeExp?.[String(c.set_code || '').trim()];
+  const bn = byCodeNumber(c);   // pewny dodatek + numer → dokładny produkt, nawet gdy nazwa źle odczytana (Silcoon → Spinarak)
+  if (bn) return [{ tid: null, name: baseName(bn[1]), set: S.catalog.exp[bn[3]] || '', no: printedNo(c), total: null, rarity: '', img: null, idp: bn[0], lang: 'ja', fromCatalog: true, verify: false, exact: true, cmCode: `${c.set_code} ${c.number || ''}`.trim() }];
+  if (ce != null) { const p = pickInExp(cands, ce, c); if (p) return [{ ...p, verify: false, exact: true, cmCode: `${c.set_code} ${c.number || ''}`.trim() }]; }
   if (!ja) {   // karta EN spoza TCGdex – spróbuj jeszcze bazy JA (stare wydania), potem cennik
     const r = await resolveIn('ja', c, loose);
     const ok = r.filter(x => x.idp && expLang(catRow(x.idp)?.[3]) !== 'other');
@@ -1446,7 +1517,8 @@ function catalogCandidates(c, cap = 15) {
   // nieznany kod: litery kodu po kolei w nazwie dodatku, od pierwszej litery („CRI” → „Chaos RIsing”) – słabsza wskazówka
   const known = new Set(code ? Object.entries(S.cmnums || {}).filter(([, e]) => cnorm(e[0]) === code).map(([id]) => catRow(+id)?.[3]).filter(x => x != null) : []);
   const seq = name => { const n = cnorm(name); if (!code || n[0] !== code[0]) return 0; let i = 0; for (const ch of n) if (ch === code[i]) i++; return i === code.length ? 1 : 0; };
-  const codeScore = expId => known.has(expId) ? 2 : seq(S.catalog.exp[expId]) ? 1 : 0;
+  const viaJp = S.codeExp?.[String(c.set_code || '').trim()];
+  const codeScore = expId => known.has(expId) || (viaJp != null && expId === viaJp) ? 2 : seq(S.catalog.exp[expId]) ? 1 : 0;
   const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const want = norm(c.name_en), atk = (c.attacks_en || []).map(norm).filter(Boolean);
   const ja = c.language === 'ja' || JA_SCRIPT.test(c.name);
