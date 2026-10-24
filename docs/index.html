@@ -342,7 +342,7 @@ const enOf = it => S.en?.get(keyOf(it)) || null;
 const pendingVerify = () => (S.vault?.portfolio || []).filter(h => h.verify && !h.sold);
 async function syncVerify() {
   if (S.readOnly || !GH.token || !PHOTOS.repo) return;
-  const req = pendingVerify().map(h => ({ key: h.uid, cands: h.verify.cands || [] }));
+  const req = pendingVerify().map(h => ({ key: h.uid, cands: h.verify.cands || [], no: h.verify.number || '', code: h.verify.set_code || '' }));
   const json = JSON.stringify({ v: 1, req });
   if (json === S._verify || (!req.length && !S._verify)) return;
   try {
@@ -353,6 +353,27 @@ async function syncVerify() {
     });
     S._verify = json;
   } catch (e) { console.warn('weryfikacja kart:', e.message); }
+}
+// raz (verify.v 2): karty do weryfikacji dostają nową listę wersji (do 30, nowy ranking) i najtańszą jako tymczasową –
+// wcześniej przypuszczeniem była najdroższa wersja (np. Basic Grass Energy z Professor Program za 241 zł); potem rozszerzenie
+// sprawdza numery na Cardmarket, a applyVerify() samo poprawia pozycje
+async function reverifyOnce() {
+  if (S.readOnly || !S.catalog) return;
+  let n = 0;
+  for (const h of pendingVerify()) {
+    if (h.verify.v === 2) continue;
+    const cands = catalogCandidates({ name: h.lang === 'ja' ? 'あ' : '', name_en: h.verify.name_en || baseName(h.name), number: h.verify.number, set_code: h.verify.set_code, language: h.lang || 'en' }, 30);
+    h.verify.v = 2; n++;
+    if (!cands.length) continue;
+    const r = catRow(cands[0].idp);
+    Object.assign(h, { id: cands[0].idp, name: r ? r[1] : h.name, set: (r && S.catalog.exp[r[3]]) || h.set });
+    h.verify.cands = cands.map(x => x.idp);
+  }
+  if (n && await saveVault(`weryfikacja: nowe wersje dla ${n} kart`)) {
+    await syncVerify(); await applyVerify();
+    if (document.documentElement.dataset.skarbiecEnExt) document.dispatchEvent(new Event('skarbiec-en-run'));   // rozszerzenie sprawdzi numery od razu
+    else requestDesktop('en');
+  }
 }
 async function applyVerify() {
   if (!S.cmnums || S.readOnly) return;
@@ -457,7 +478,11 @@ async function syncTargets() {
   if (S.readOnly || !GH.token || !PHOTOS.repo) return;
   await syncSell();
   const seen = new Map();
-  for (const it of [...(S.vault.watchlists || []).flatMap(w => w.items || []), ...(S.vault.portfolio || []).filter(h => !h.sold), ...marketWatch()])
+  // portfel: ceny EN/NM z Cardmarketu tylko dla kart ≥ progu bulk (0,5 €) – bulk wyceniamy z nocnego cennika (decyzja użytkownika 24.10.2026;
+  // wcześniej rozszerzenie sprawdzało cały portfel, po skanowaniu setek commonów 150 stron na przebieg)
+  const pfTrend = h => { const r = catRow(h.id); return r ? (h.holo ? r[9] || r[4] : r[4]) : null; };
+  const pfCheck = h => !h.sold && (h.grade?.by || !(bulkMin() > 0) || pfTrend(h) == null || pfTrend(h) >= bulkMin());
+  for (const it of [...(S.vault.watchlists || []).flatMap(w => w.items || []), ...(S.vault.portfolio || []).filter(pfCheck), ...marketWatch()])
     if (+it.id > 0 && !seen.has(keyOf(it))) seen.set(keyOf(it), { id: +it.id, holo: !!it.holo, name: itemMeta(it).name });
   // progi list „komplet z wysyłką” – rozszerzenie dopasowuje je do Wants Listy po składzie (idProduct) i używa do auto-koszyka
   const lists = (S.vault.watchlists || []).filter(w => w.metric === 'komplet' && w.target_eur)
@@ -751,8 +776,10 @@ function holdingsCalc() {
     const unit = p?.[mk] ?? p?.trend ?? null;
     const raw = unit != null ? unit * (h.qty || 1) * fx : null;
     const graded = h.grade?.val > 0;   // slab: ręczna wycena zamiast ceny karty bez gradingu
-    const value = graded ? h.grade.val * (h.qty || 1) : raw;
-    const row = { h, m, p, unit, raw, graded, fb: !graded && unit != null && p?.[mk] == null && mk !== 'trend', value, cost: +h.cost_pln || 0 };
+    // karta do weryfikacji (wersja niepewna): najniższa cena wśród możliwych wersji – portfel nie rośnie od złego przypuszczenia
+    const unsure = !graded && h.verify ? Math.min(...[h.id, ...(h.verify.cands || [])].map(id => catRow(id)?.[4]).filter(x => x > 0)) : null;
+    const value = graded ? h.grade.val * (h.qty || 1) : unsure != null && isFinite(unsure) ? Math.min(unsure * (h.qty || 1) * fx, raw ?? Infinity) : raw;
+    const row = { h, m, p, unit, raw, graded, unsure: unsure != null && isFinite(unsure), fb: !graded && unit != null && p?.[mk] == null && mk !== 'trend', value, cost: +h.cost_pln || 0 };
     row.pl = value != null ? value - row.cost : null; row.plp = pct(value, row.cost);
     row.d7 = graded ? null : pct(unit, pfAgo(keyOf(h), 7, PF_METRICS[mk][1]));
     row.free = h.date ? taxFreeFrom(h.date) : null;
@@ -1053,7 +1080,7 @@ function vPortfel(v) {
     ${pfGroups(pf.active).map(g => `<tr class="grp click" data-act="pfgrp" data-set="${esc(g.bulk ? '+bulk' : g.set)}"><td colspan="9"><span class="muted">${g.open ? '▾' : '▸'}</span> <b>${esc(g.set)}</b>${g.lang ? ' <span class="badge">JP</span>' : ''}
       <span class="muted">· ${g.n} ${plKart(g.n)} · </span>${P(g.value)}${g.cost ? ` <span class="${cls(pct(g.value, g.cost))}">${PC(pct(g.value, g.cost))}</span>` : ''}${g.bulk && !S.readOnly && g.rows.some(r => r.h.photos?.length || r.h.crop) ? ` <button class="btn sm" data-act="bulkphotos" style="margin-left:8px">🧹 Usuń moje zdjęcia bulk</button>` : ''}</td></tr>` + (g.open ? g.rows.map(r => `<tr>
       <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${r.h.no && !S.cmnums?.[r.h.id] ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}${r.h.grade?.by ? ` <span class="badge good" title="${esc(r.h.grade.cert ? 'certyfikat ' + r.h.grade.cert : 'karta oceniona')}">${esc(gradeLbl(r.h))}</span>` : ''}${{ listed: ` <span class="badge good" title="${esc(sellTip(r.h))}">CM ${E(S.listed?.[r.h.uid]?.price)}${S.listed?.[r.h.uid]?.miss ? ' ?' : ''}</span>`, wait: ' <span class="badge" title="Rozszerzenie wystawi ją przy najbliższym przebiegu">na sprzedaż – czeka</span>', err: ` <span class="badge warn" title="${esc(S.listed?.[r.h.uid]?.err || '')}"><span class="dot"></span>wystawienie nie wyszło</span>` }[sellState(r.h)] || ''}${r.h.verify ? ' <span class="badge warn" title="Wersję (dodatek) poprawi rozszerzenie po sprawdzeniu numeru na Cardmarkecie"><span class="dot"></span>do weryfikacji</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set ? '' : KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
-      <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.h.grade?.by ? `<br><small class="${gradeDue(r.h) ? 'down' : 'muted'}">${r.graded ? `wycena ręczna ${dPL(r.h.grade.t)}${gradeDue(r.h) ? ' · do aktualizacji' : ''}` : 'wpisz wycenę slabu'}</small>${r.graded && r.raw != null ? `<br><small class="muted" title="Cena karty bez gradingu (${PF_METRICS[pfMetric()][0]})">bez gradingu ${P(r.raw)}</small>` : ''}` : r.fb ? '<br><small class="muted" title="Cardmarket nie podaje dla tej pozycji wybranej średniej">wg trendu</small>' : r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
+      <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.h.grade?.by ? `<br><small class="${gradeDue(r.h) ? 'down' : 'muted'}">${r.graded ? `wycena ręczna ${dPL(r.h.grade.t)}${gradeDue(r.h) ? ' · do aktualizacji' : ''}` : 'wpisz wycenę slabu'}</small>${r.graded && r.raw != null ? `<br><small class="muted" title="Cena karty bez gradingu (${PF_METRICS[pfMetric()][0]})">bez gradingu ${P(r.raw)}</small>` : ''}` : r.unsure ? '<br><small class="muted" title="Wersja karty jeszcze niepewna – liczę najniższą cenę spośród możliwych wersji">minimum · do weryfikacji</small>' : r.fb ? '<br><small class="muted" title="Cardmarket nie podaje dla tej pozycji wybranej średniej">wg trendu</small>' : r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
       <td>${enOf(r.h)?.min != null ? `${E(enOf(r.h).min)}<br><small class="muted">≈ ${P(enOf(r.h).min * fxNow())}</small>` : '<span class="muted">—</span>'}</td>
       <td class="${cls(r.plp)}">${r.pl != null ? `${r.pl >= 0 ? '+' : '−'}${P(Math.abs(r.pl))}<br><small>${PC(r.plp)}</small>` : '—'}</td>
       <td class="${cls(r.d7)}">${PC(r.d7)}</td>
@@ -1361,16 +1388,24 @@ function expLang(expId) {
   return 'en';
 }
 // wszystkie wersje karty w cenniku (po angielskiej nazwie), najbardziej prawdopodobne pierwsze
-function catalogCandidates(c) {
+function catalogCandidates(c, cap = 15) {
   if (!S.catalog || !c.name_en) return [];
+  // kod setu z karty („M-P”, „MEE”, „SV2a”) w nazwie dodatku CM = wyżej; znany numer z CM zgodny z wydrukiem = najwyżej
+  const cnorm = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''), code = cnorm(c.set_code);
+  const noHit = id => { const e = S.cmnums?.[id]; return e && c.number && normNo(e[1]) === normNo(c.number) && (!code || !e[0] || cnorm(e[0]) === code) ? 1 : 0; };
+  // kod → dodatek: z numerów, które rozszerzenie już zna („MEE” = Mega Evolution Energies, „DRI” = Destined Rivals);
+  // nieznany kod: litery kodu po kolei w nazwie dodatku, od pierwszej litery („CRI” → „Chaos RIsing”) – słabsza wskazówka
+  const known = new Set(code ? Object.entries(S.cmnums || {}).filter(([, e]) => cnorm(e[0]) === code).map(([id]) => catRow(+id)?.[3]).filter(x => x != null) : []);
+  const seq = name => { const n = cnorm(name); if (!code || n[0] !== code[0]) return 0; let i = 0; for (const ch of n) if (ch === code[i]) i++; return i === code.length ? 1 : 0; };
+  const codeScore = expId => known.has(expId) ? 2 : seq(S.catalog.exp[expId]) ? 1 : 0;
   const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const want = norm(c.name_en), atk = (c.attacks_en || []).map(norm).filter(Boolean);
   const ja = c.language === 'ja' || JA_SCRIPT.test(c.name);
   const langScore = r => { const l = expLang(r[3]); return ja ? (l === 'ja' ? 2 : l === 'en' ? 1 : 0) : (l === 'en' ? 2 : 0); };
   const rows = S.catalog.p.filter(r => S.catalog.kinds[r[2]] === 'S' && norm(baseName(r[1])) === want).map(r => {
     const has = norm((r[1].match(/\[(.*)\]/) || [])[1]);
-    return { r, hit: atk.filter(a => has.includes(a)).length, lang: langScore(r) };
-  }).filter(x => x.lang > 0).sort((a, b) => b.hit - a.hit || b.lang - a.lang || (b.r[4] || 0) - (a.r[4] || 0)).slice(0, 15);
+    return { r, hit: atk.filter(a => has.includes(a)).length, lang: langScore(r), num: noHit(r[0]), code: code.length >= 2 ? Math.max(codeScore(r[3]), cnorm(S.catalog.exp[r[3]]).includes(code) ? 1 : 0) : 0 };
+  }).filter(x => x.lang > 0 || x.code === 2).sort((a, b) => b.num - a.num || b.code - a.code || b.hit - a.hit || b.lang - a.lang || (a.r[4] ?? 1e9) - (b.r[4] ?? 1e9)).slice(0, cap);   // przy remisie najtańsza – nie zawyżamy portfela
   const alts = rows.map(x => x.r[0]);
   return rows.map(({ r }) => ({ tid: null, name: baseName(r[1]), set: S.catalog.exp[r[3]] || `dodatek #${r[3]}`, no: printedNo(c), total: null, rarity: '', img: null,
     idp: r[0], lang: ja ? 'ja' : 'en', fromCatalog: true, verify: true, alts }));
@@ -1960,6 +1995,7 @@ function formHolding(base, existing) {
       <label class="f">Data zakupu<input type="date" id="h-d" value="${existing?.date || todayISO()}" max="${todayISO()}"></label>
       <label class="f">Łączny koszt zakupu (z wysyłką)<input type="number" id="h-c" step="0.01" min="0" value="${curCost}"></label>
       <label class="f">Waluta<select id="h-cur"><option value="PLN">PLN</option><option value="EUR">EUR (przeliczę po kursie ${fxNow().toFixed(4).replace('.', ',')})</option></select></label>
+      ${existing?.verify ? `<label class="f" style="grid-column:1/-1">Wersja karty (do weryfikacji – wybierz właściwą, jeśli wiesz)<select id="h-ver">${[existing.id, ...(existing.verify.cands || [])].filter((v, i, a) => a.indexOf(v) === i).map(id => { const r = catRow(id), cn = S.cmnums?.[id]; return `<option value="${id}" ${id === existing.id ? 'selected' : ''}>${esc(`${r ? baseName(r[1]) : '#' + id} · ${r ? S.catalog.exp[r[3]] || '' : ''}${cn ? ' · ' + cn.slice(0, 2).join(' ') : ''} · ${r?.[4] != null ? E(r[4]) : '—'}${id === existing.id ? ' (obecnie)' : ''}`)}</option>`; }).join('')}</select></label>` : ''}
       <label class="f" style="grid-column:1/-1">Notatka (np. gdzie kupione, stan)<input type="text" id="h-n" value="${esc(existing?.note || '')}"></label>
       <label class="f">Grading<select id="h-gby"><option value="">brak – karta bez oceny</option>${[...new Set([...GRADERS, existing?.grade?.by].filter(Boolean))].map(g => `<option ${existing?.grade?.by === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></label>
       <label class="f">Ocena<input type="text" id="h-gg" value="${esc(existing?.grade?.g || '')}" placeholder="np. 10, 9.5"></label>
@@ -1973,6 +2009,11 @@ function formHolding(base, existing) {
       if ($('#h-cur', d).value === 'EUR') cost = +(cost * fxNow()).toFixed(2);
       const rec = existing || { uid: uid(), id: it.id, holo: !!it.holo, ...snapshotMeta(it), sold: null };
       Object.assign(rec, { qty: Math.max(1, +$('#h-q', d).value || 1), date: $('#h-d', d).value || null, cost_pln: cost, note: $('#h-n', d).value.trim() });
+      const ver = $('#h-ver', d);
+      if (ver && +ver.value !== rec.id) {   // wybrana ręcznie wersja = zweryfikowana
+        const r = catRow(+ver.value);
+        Object.assign(rec, { id: +ver.value, name: r ? r[1] : rec.name, set: (r && S.catalog.exp[r[3]]) || rec.set }); delete rec.verify;
+      }
       const gby = $('#h-gby', d).value, gv = parseFloat($('#h-gv', d).value);
       if (gby) {
         const g = { ...(rec.grade || {}), by: gby, g: $('#h-gg', d).value.trim(), cert: $('#h-gc', d).value.trim() };
@@ -2250,7 +2291,7 @@ async function unlock(pw, remember) {
   S.market ||= { h: {}, fx: {}, pv: [], alerts: [], state: {} };
   shell();
   loadCatalog().then(() => { if (S.tab !== 'rynek') render(); }).catch(() => {});
-  loadEN().then(async () => { await loadCatalog().catch(() => {}); applyVerify(); syncVerify(); if (S.en?.size && ['watch', 'portfel'].includes(S.tab)) render(); });
+  loadEN().then(async () => { await loadCatalog().catch(() => {}); await applyVerify(); await reverifyOnce(); syncVerify(); if (S.en?.size && ['watch', 'portfel'].includes(S.tab)) render(); });
   enLiveRefresh();
   loadCatalog().catch(() => {}).then(syncTargets);
   // decyzja użytkownika 24.10.2026: próg bulk 0,5 € zamiast 1 € – raz przestaw zapisane ustawienie
