@@ -52,6 +52,7 @@ DEFAULT_SETTINGS = {
     "summary_weekday": 0,        # 0 = poniedziałek
     "pf_metric": "avg30",        # wycena portfela: avg30 | avg7 | avg1 | trend (brak średniej → trend)
 }
+GRADE_REMIND_D = 30   # przypomnienie o ręcznej wycenie slabu (PSA/CGC…) co tyle dni
 PF_METRICS = {"avg30": ("średnia 30 dni", 4), "avg7": ("średnia 7 dni", 3), "avg1": ("średnia z 1 dnia", 5), "trend": ("trend", 1)}
 
 
@@ -504,6 +505,20 @@ def main():
         qty = h.get("qty", 1)
         cost = float(h.get("cost_pln") or 0)
         cost_pln += cost
+        grade = h.get("grade") or {}
+        if grade.get("by"):
+            # slab: cennik CM nie ma cen kart ocenionych – ręczna wycena ze strony; przypomnienie co GRADE_REMIND_D dni
+            age = (today - date.fromisoformat(grade["t"])).days if grade.get("t") else None
+            sk = f"pf:{h['uid']}:grade"
+            if (age is None or age >= GRADE_REMIND_D) and (not st.get(sk) or (today - date.fromisoformat(st[sk])).days >= GRADE_REMIND_D):
+                lbl = f"{grade['by']} {grade.get('g', '')}".strip()
+                alert("info", f"🏷️ {name_of(h)} {lbl}: zaktualizuj wycenę",
+                      (f"Ostatnia ręczna wycena {pln(float(grade['val']))} / szt. jest sprzed {age} dni." if grade.get("val") and age is not None else
+                       "Slab nie ma jeszcze wyceny – w portfelu liczony jest po cenie karty bez gradingu.") +
+                      " Sprawdź zakończone aukcje i wpisz wartość w Skarbcu (Portfel → Wyceń).")
+                st[sk] = day
+            if grade.get("val"):
+                cur = float(grade["val"]) / fx   # wartość w zł za sztukę → przelicznik niżej daje z powrotem zł
         if cur is None:
             priced = False
             continue

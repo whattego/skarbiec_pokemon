@@ -576,10 +576,12 @@ function holdingsCalc() {
   for (const h of S.vault.portfolio || []) {
     const m = itemMeta(h), p = nowPrice(h), mk = pfMetric();
     const unit = p?.[mk] ?? p?.trend ?? null;
-    const value = unit != null ? unit * (h.qty || 1) * fx : null;
-    const row = { h, m, p, unit, fb: unit != null && p?.[mk] == null && mk !== 'trend', value, cost: +h.cost_pln || 0 };
+    const raw = unit != null ? unit * (h.qty || 1) * fx : null;
+    const graded = h.grade?.val > 0;   // slab: ręczna wycena zamiast ceny karty bez gradingu
+    const value = graded ? h.grade.val * (h.qty || 1) : raw;
+    const row = { h, m, p, unit, raw, graded, fb: !graded && unit != null && p?.[mk] == null && mk !== 'trend', value, cost: +h.cost_pln || 0 };
     row.pl = value != null ? value - row.cost : null; row.plp = pct(value, row.cost);
-    row.d7 = pct(unit, pfAgo(keyOf(h), 7, PF_METRICS[mk][1]));
+    row.d7 = graded ? null : pct(unit, pfAgo(keyOf(h), 7, PF_METRICS[mk][1]));
     row.free = h.date ? taxFreeFrom(h.date) : null;
     (h.sold ? sold : active).push(row);
   }
@@ -736,6 +738,39 @@ function enNote(rows) {
   return `Najtaniej EN/NM: oferty po angielsku, NM, od sprzedawców wysyłających do Polski (cena bez wysyłki) · ${ens.length}/${rows.length} kart · sprawdzone ${agoPL(t)} · „Uaktualnij” otwiera na chwilę kartę Cardmarketu (zamyka się sama); przy zwykłej wizycie na Cardmarkecie ceny odświeżają się same, gdy mają ponad 20 godz. · 🔎 = ponad 15% poniżej trendu.`;
 }
 
+// ---------- Grading (slaby PSA/CGC/…) ----------
+// Cennik Cardmarketu nie ma cen kart ocenionych – wartość slabu wpisuje się ręcznie (h.grade.val, zł za sztukę, h.grade.t = data wyceny);
+// po GRADE_REMIND_D dniach Skarbiec i bot (Discord) przypominają o aktualizacji. Pozostałe pola: by (firma), g (ocena), cert (nr certyfikatu).
+const GRADERS = ['PSA', 'CGC', 'BGS', 'SGC', 'TAG', 'ACE'], GRADE_REMIND_D = 30;
+const gradeLbl = h => h.grade?.by ? `${h.grade.by} ${h.grade.g || ''}`.trim() : '';
+const gradeAge = h => h.grade?.t ? Math.floor((Date.parse(todayISO()) - Date.parse(h.grade.t)) / 864e5) : null;
+const gradeDue = h => !!h.grade?.by && !h.sold && (!(h.grade.val > 0) || gradeAge(h) >= GRADE_REMIND_D);
+function gradeSoldUrl(h) {   // zakończone aukcje eBay: nazwa + numer + firma i ocena (+ Japanese)
+  const c = S.cmnums?.[h.id], no = c?.[1] || String(h.no || '').split('/')[0];
+  const q = [baseName(itemMeta(h).name), no, gradeLbl(h), h.lang === 'ja' ? 'japanese' : ''].filter(Boolean).join(' ');
+  return `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}&LH_Sold=1&LH_Complete=1`;
+}
+function gradeCertUrl(h) {
+  const n = String(h.grade?.cert || '').replace(/\D/g, ''); if (!n) return null;
+  return h.grade.by === 'PSA' ? `https://www.psacard.com/cert/${n}` : h.grade.by === 'CGC' ? `https://www.cgccards.com/certlookup/${n}/` : null;
+}
+function formGradeValue(h) {
+  const cert = gradeCertUrl(h), m = itemMeta(h);
+  modal(`Wycena slabu ${esc(gradeLbl(h))}`, `<p style="margin-top:0"><b>${esc(m.name)}</b> · ${esc(m.set || '')}${h.grade.val > 0 ? `<br><span class="muted">ostatnia wycena: ${P(h.grade.val)} / szt. (${dPL(h.grade.t)})</span>` : ''}</p>
+    <p class="muted" style="font-size:13px">Sprawdź ostatnie sprzedaże tej karty w tej ocenie i wpisz realną cenę (najlepiej medianę kilku ostatnich, nie najwyższą ofertę).<br>
+    <a href="${esc(gradeSoldUrl(h))}" target="_blank" rel="noopener">Sprzedane na eBay ↗</a>${cert ? ` · <a href="${esc(cert)}" target="_blank" rel="noopener">Certyfikat ${esc(h.grade.by)} ↗</a>` : ''}</p>
+    <div class="grid g2" style="gap:10px"><label class="f">Wartość jednej sztuki<input type="number" id="g-v" step="0.01" min="0" value="${h.grade.val > 0 ? h.grade.val : ''}"></label>
+      <label class="f">Waluta<select id="g-cur"><option value="PLN">PLN</option><option value="EUR">EUR (kurs ${fxNow().toFixed(4).replace('.', ',')})</option></select></label></div>
+    <div class="row" style="margin-top:14px"><button class="btn primary" id="g-ok">Zapisz wycenę</button><button class="btn" data-close>Anuluj</button></div>`, d => {
+    $('#g-ok', d).onclick = async () => {
+      let v = parseFloat($('#g-v', d).value); if (!(v > 0)) return toast('Podaj wartość slabu.');
+      if ($('#g-cur', d).value === 'EUR') v = +(v * fxNow()).toFixed(2);
+      h.grade = { ...h.grade, val: v, t: todayISO() };
+      d.close(); await saveVault(`wycena slabu: ${m.name} ${gradeLbl(h)}`); render();
+    };
+  });
+}
+
 // ---------- Portfel ----------
 // pozycje pogrupowane po dodatkach (jak w segregatorze): w grupie po numerze karty, grupy zwijane (localStorage)
 const plKart = n => n === 1 ? 'karta' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'karty' : 'kart';
@@ -770,6 +805,8 @@ function vPortfel(v) {
     <button class="btn primary" data-act="addto" data-mode="portfel">+ Dodaj do portfela</button></div>
   ${pendingVerify().length ? `<div class="banner" style="margin-bottom:12px">🔎 ${pendingVerify().length} kart czeka na weryfikację wersji (JP/promo). Rozszerzenie Chrome sprawdzi ich numery na Cardmarkecie i Skarbiec sam poprawi pozycje.
     <button class="btn sm" data-act="enRefresh">${enScript() ? 'Sprawdź teraz' : 'Zleć komputerowi'}</button></div>` : ''}
+  ${pf.active.filter(r => gradeDue(r.h)).map(r => `<div class="banner" style="margin-bottom:12px">🏷️ <b>${esc(r.m.name)} ${esc(gradeLbl(r.h))}</b>: ${r.graded ? `wycena z ${dPL(r.h.grade.t)} ma ponad ${GRADE_REMIND_D} dni` : 'slab nie ma jeszcze wyceny – liczę go po cenie karty bez gradingu'}.
+    <button class="btn sm primary" data-act="gradeval" data-uid="${r.h.uid}">Wyceń teraz</button> <a href="${esc(gradeSoldUrl(r.h))}" target="_blank" rel="noopener">sprzedane na eBay ↗</a></div>`).join('')}
   <div class="grid g4">
     <div class="card stat"><div class="lbl">Wartość</div><div class="val">${P(pf.value)}</div><div class="note">≈ ${E(pf.value / fxNow())}</div></div>
     <div class="card stat"><div class="lbl">Koszt zakupu</div><div class="val">${P(pf.cost)}</div><div class="note">${pf.active.length} pozycji</div></div>
@@ -784,13 +821,13 @@ function vPortfel(v) {
     <tr><th>Pozycja</th><th>Ilość</th><th>Koszt</th><th>Wartość</th><th>Najtaniej EN/NM / szt.</th><th>Zysk</th><th>7 dni</th><th>Bez PIT od</th><th></th></tr>
     ${pfGroups(pf.active).map(g => `<tr class="grp click" data-act="pfgrp" data-set="${esc(g.set)}"><td colspan="9"><span class="muted">${g.open ? '▾' : '▸'}</span> <b>${esc(g.set)}</b>${g.lang ? ' <span class="badge">JP</span>' : ''}
       <span class="muted">· ${g.n} ${plKart(g.n)} · </span>${P(g.value)}${g.cost ? ` <span class="${cls(pct(g.value, g.cost))}">${PC(pct(g.value, g.cost))}</span>` : ''}</td></tr>` + (g.open ? g.rows.map(r => `<tr>
-      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${r.h.no && !S.cmnums?.[r.h.id] ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}${r.h.verify ? ' <span class="badge warn" title="Wersję (dodatek) poprawi rozszerzenie po sprawdzeniu numeru na Cardmarkecie"><span class="dot"></span>do weryfikacji</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set ? '' : KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
-      <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.fb ? '<br><small class="muted" title="Cardmarket nie podaje dla tej pozycji wybranej średniej">wg trendu</small>' : r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
+      <td class="name"><div class="nm" style="cursor:pointer" data-act="detail" data-id="${r.h.id}" data-holo="${r.h.holo ? 1 : ''}"><span data-pimg="${esc(keyOf(r.h))}">${esc(r.m.name)}</span>${r.h.no && !S.cmnums?.[r.h.id] ? ` <span class="muted" style="font-weight:400">${esc(r.h.no)}</span>` : ''}${r.h.lang === 'ja' ? ' <span class="badge">JP</span>' : ''}${r.h.grade?.by ? ` <span class="badge good" title="${esc(r.h.grade.cert ? 'certyfikat ' + r.h.grade.cert : 'karta oceniona')}">${esc(gradeLbl(r.h))}</span>` : ''}${r.h.verify ? ' <span class="badge warn" title="Wersję (dodatek) poprawi rozszerzenie po sprawdzeniu numeru na Cardmarkecie"><span class="dot"></span>do weryfikacji</span>' : ''} ${cmA(r.h.id, r.m.name, r.h.holo)}<small>${esc([r.m.set ? '' : KIND[r.m.kind], r.h.date ? 'kupione ' + dPL(r.h.date) : '', r.h.note].filter(Boolean).join(' · '))}</small></div>${r.h.photos?.length ? `<button class="btn sm" data-act="holdphotos" data-uid="${r.h.uid}" title="Zdjęcia" style="margin-top:4px">📷 ${r.h.photos.length}</button>` : ''}</td>
+      <td>${r.h.qty || 1}</td><td>${P(r.cost)}</td><td><b>${P(r.value)}</b>${r.h.grade?.by ? `<br><small class="${gradeDue(r.h) ? 'down' : 'muted'}">${r.graded ? `wycena ręczna ${dPL(r.h.grade.t)}${gradeDue(r.h) ? ' · do aktualizacji' : ''}` : 'wpisz wycenę slabu'}</small>${r.graded && r.raw != null ? `<br><small class="muted" title="Cena karty bez gradingu (${PF_METRICS[pfMetric()][0]})">bez gradingu ${P(r.raw)}</small>` : ''}` : r.fb ? '<br><small class="muted" title="Cardmarket nie podaje dla tej pozycji wybranej średniej">wg trendu</small>' : r.p?.src === 'c' ? '<br><small class="muted">z katalogu</small>' : ''}</td>
       <td>${enOf(r.h)?.min != null ? `${E(enOf(r.h).min)}<br><small class="muted">≈ ${P(enOf(r.h).min * fxNow())}</small>` : '<span class="muted">—</span>'}</td>
       <td class="${cls(r.plp)}">${r.pl != null ? `${r.pl >= 0 ? '+' : '−'}${P(Math.abs(r.pl))}<br><small>${PC(r.plp)}</small>` : '—'}</td>
       <td class="${cls(r.d7)}">${PC(r.d7)}</td>
       <td>${r.free ? (r.free <= today ? '<span class="badge good"><span class="dot"></span>już teraz</span>' : `<span class="badge warn"><span class="dot"></span>${dPL(r.free)}</span>`) : '—'}</td>
-      <td><div class="row" style="justify-content:flex-end;flex-wrap:nowrap"><button class="btn sm" data-act="sell" data-uid="${r.h.uid}">Sprzedaj</button><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}" title="Edytuj">✎</button></div></td></tr>`).join('') : '')).join('') || '<tr><td colspan="9" class="empty">Portfel jest pusty. Dodaj karty i sealed, które już masz – z ceną i datą zakupu.</td></tr>'}
+      <td><div class="row" style="justify-content:flex-end;flex-wrap:nowrap">${r.h.grade?.by ? `<button class="btn sm${gradeDue(r.h) ? ' primary' : ''}" data-act="gradeval" data-uid="${r.h.uid}" title="Wpisz aktualną wartość slabu">Wyceń</button>` : ''}<button class="btn sm" data-act="sell" data-uid="${r.h.uid}">Sprzedaj</button><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}" title="Edytuj">✎</button></div></td></tr>`).join('') : '')).join('') || '<tr><td colspan="9" class="empty">Portfel jest pusty. Dodaj karty i sealed, które już masz – z ceną i datą zakupu.</td></tr>'}
   </table></div></div>
   ${pf.sold.length ? `<div class="card" style="margin-top:12px"><h2>Sprzedane</h2><div class="tblw"><table class="tbl"><tr><th>Pozycja</th><th>Koszt</th><th>Sprzedaż</th><th>Zysk</th><th>Data</th><th></th></tr>
     ${pf.sold.map(r => { const g = (+r.h.sold.price_pln || 0) - r.cost; return `<tr><td class="name"><div class="nm">${esc(r.m.name)}<small>${r.h.qty || 1} szt.</small></div></td><td>${P(r.cost)}</td><td>${P(+r.h.sold.price_pln)}</td><td class="${cls(g)}">${g >= 0 ? '+' : '−'}${P(Math.abs(g))}</td><td>${dPL(r.h.sold.date)}${r.free && r.h.sold.date < r.free ? '<br><small class="down">przed upływem 6 mies.</small>' : ''}</td><td><button class="btn sm" data-act="edithold" data-uid="${r.h.uid}">✎</button></td></tr>`; }).join('')}</table></div>
@@ -862,14 +899,16 @@ For each card read the text printed on the card itself:
 - variant: "reverse_holo" when the whole card frame except the artwork is foil, "holo" when only the artwork is foil, "normal" when there is no foil, "unknown" if you cannot tell.
 - position: where the card is in the photo in Polish (e.g. "lewy górny", "środek", "całe zdjęcie").
 - box: the card's bounding box in the photo as [left, top, right, bottom], each 0–1000 relative to the image width/height (whole photo = [0, 0, 1000, 1000]).
+- slab_company, slab_grade, slab_cert: if the card is sealed in a grading slab (hard plastic case with a label), the grading company as printed ("PSA", "CGC", "BGS", "SGC", "TAG", "ACE"), the grade ("10", "9.5", and for PSA "GEM MT 10" → "10") and the certification number from the label; otherwise "" for all three. A toploader or sleeve is not a slab.
 - confidence: "high" only when you can clearly read both name and number.
 Skip card backs, sleeves without visible text, and non-card objects. If nothing is readable, return an empty list.`;
 const SCAN_SCHEMA = { type: 'object', additionalProperties: false, required: ['cards'], properties: { cards: { type: 'array', items: { type: 'object', additionalProperties: false,
-  required: ['name', 'number', 'set_total', 'set_code', 'language', 'name_en', 'attacks_en', 'variant', 'position', 'box', 'confidence'],
+  required: ['name', 'number', 'set_total', 'set_code', 'language', 'name_en', 'attacks_en', 'variant', 'position', 'box', 'slab_company', 'slab_grade', 'slab_cert', 'confidence'],
   properties: { name: { type: 'string' }, number: { type: 'string' }, set_total: { type: 'string' }, set_code: { type: 'string' },
     name_en: { type: 'string' }, attacks_en: { type: 'array', items: { type: 'string' } },
     language: { type: 'string', enum: ['en', 'ja', 'other'] }, variant: { type: 'string', enum: ['normal', 'holo', 'reverse_holo', 'unknown'] },
-    position: { type: 'string' }, box: { type: 'array', items: { type: 'integer' } }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] } } } } } };
+    position: { type: 'string' }, box: { type: 'array', items: { type: 'integer' } },
+    slab_company: { type: 'string' }, slab_grade: { type: 'string' }, slab_cert: { type: 'string' }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] } } } } } };
 const SC = { jobs: [], cost: 0, date: todayISO(), busy: 0 };
 let _ai = null;
 async function aiClient() {
@@ -1234,7 +1273,7 @@ function scQueue() {
         ${k?.img ? `<img src="${esc(k.img)}" alt="" loading="lazy">` : k?.idp ? `<img data-cmimg="${k.idp}" src="${c.cropUrl || j.url}" alt="" title="Twoje zdjęcie – zdjęcie z Cardmarketu pojawi się po sprawdzeniu cen przez rozszerzenie">` : '<span></span>'}
         <div style="min-width:0"><div class="nm">${esc(k ? k.name : c.det.name || '?')} <span class="muted" style="font-weight:400">${esc(printedNo(c.det) || (k ? `${k.no}/${k.total ?? '?'}` : ''))}</span>
           ${(k?.lang || c.det.language) === 'ja' ? '<span class="badge">JP</span>' : ''}${c.det.name_en && c.det.name_en !== (k?.name || c.det.name) && JA_SCRIPT.test(c.det.name) ? ` <span class="muted" style="font-weight:400">(${esc(c.det.name_en)})</span>` : ''}
-          ${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k?.exact ? `<span class="badge good" title="Kod i numer z karty zgadzają się z tytułem produktu na Cardmarkecie"><span class="dot"></span>✓ ${esc(k.cmCode)}</span>` : k?.verify ? '<span class="badge warn" title="Rozszerzenie Chrome sprawdzi numer na Cardmarkecie i samo poprawi wersję w portfelu"><span class="dot"></span>do weryfikacji</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
+          ${c.det.slab_company ? `<span class="badge good" title="Slab – wycenę wpiszesz w portfelu">${esc(`${c.det.slab_company} ${c.det.slab_grade || ''}`.trim())}</span>` : ''}${c.det.confidence !== 'high' ? '<span class="badge warn"><span class="dot"></span>sprawdź</span>' : ''}${k?.exact ? `<span class="badge good" title="Kod i numer z karty zgadzają się z tytułem produktu na Cardmarkecie"><span class="dot"></span>✓ ${esc(k.cmCode)}</span>` : k?.verify ? '<span class="badge warn" title="Rozszerzenie Chrome sprawdzi numer na Cardmarkecie i samo poprawi wersję w portfelu"><span class="dot"></span>do weryfikacji</span>' : ''}${k && !catRow(k.idp) ? '<span class="badge">brak w cenniku</span>' : ''}
           <small>${esc(k ? [k.set, k.rarity].filter(Boolean).join(' · ') : 'nie dopasowano – ' + [c.det.set_code, c.det.language].filter(Boolean).join(' '))} · ${esc(c.det.position)}${pr ? ` · trend <b>${E(pr)}</b>` : ''}${k?.idp ? ` · <a href="${cmLink(k.idp, k.name)}" target="_blank" rel="noopener">Cardmarket ↗</a>` : ''}</small></div></div>
         <div class="ctl">
           ${c.cands.length > 1 ? `<select data-j="${j.id}" data-c="${i}" data-f="sel" aria-label="Wariant">${c.cands.map((x, n) => `<option value="${n}" ${n === c.sel ? 'selected' : ''}>${esc(`${x.name} · ${x.set}${S.cmnums?.[x.idp] ? ' · ' + S.cmnums[x.idp].slice(0, 2).join(' ') : ''}`)}</option>`).join('')}<option value="-1" ${c.sel < 0 ? 'selected' : ''}>żadna z tych</option></select>` : ''}
@@ -1265,7 +1304,7 @@ async function scApprove() {
     const r = catRow(card.idp);
     return { uid: uid(), id: card.idp, holo: !!c.holo, name: r ? r[1] : card.name, set: (r && S.catalog.exp[r[3]]) || card.set, kind: 'S',
       qty: c.qty, date: SC.date, cost_pln: +(+c.cost || 0).toFixed(2), note: '', no: printedNo(c.det) || [card.no, card.total].filter(Boolean).join('/'), lang: card.lang || c.det.language, sold: null, tcgdex: card.tid,
-      ...(card.verify ? { verify: { name_en: c.det.name_en, number: c.det.number, set_code: c.det.set_code, cands: card.alts } } : {}), ...(card.img ? { img: card.img } : {}), ...(c.cropPath ? { crop: c.cropPath } : {}), ...(j.photo ? { photos: [j.photo] } : {}) };
+      ...(card.verify ? { verify: { name_en: c.det.name_en, number: c.det.number, set_code: c.det.set_code, cands: card.alts } } : {}), ...(card.img ? { img: card.img } : {}), ...(c.cropPath ? { crop: c.cropPath } : {}), ...(c.det.slab_company ? { grade: { by: (GRADERS.find(g => g === String(c.det.slab_company).toUpperCase()) || c.det.slab_company), g: String(c.det.slab_grade || '').replace(/^\D+/, ''), cert: c.det.slab_cert || '' } } : {}), ...(j.photo ? { photos: [j.photo] } : {}) };
   });
   const scans = new Map();
   for (const { j } of sel) if (j.photo) scans.set(j.photo, { path: j.photo, date: todayISO(), n: j.cards.length });
@@ -1468,7 +1507,11 @@ function formHolding(base, existing) {
       <label class="f">Data zakupu<input type="date" id="h-d" value="${existing?.date || todayISO()}" max="${todayISO()}"></label>
       <label class="f">Łączny koszt zakupu (z wysyłką)<input type="number" id="h-c" step="0.01" min="0" value="${curCost}"></label>
       <label class="f">Waluta<select id="h-cur"><option value="PLN">PLN</option><option value="EUR">EUR (przeliczę po kursie ${fxNow().toFixed(4).replace('.', ',')})</option></select></label>
-      <label class="f" style="grid-column:1/-1">Notatka (np. gdzie kupione, stan, PSA)<input type="text" id="h-n" value="${esc(existing?.note || '')}"></label>
+      <label class="f" style="grid-column:1/-1">Notatka (np. gdzie kupione, stan)<input type="text" id="h-n" value="${esc(existing?.note || '')}"></label>
+      <label class="f">Grading<select id="h-gby"><option value="">brak – karta bez oceny</option>${[...new Set([...GRADERS, existing?.grade?.by].filter(Boolean))].map(g => `<option ${existing?.grade?.by === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></label>
+      <label class="f">Ocena<input type="text" id="h-gg" value="${esc(existing?.grade?.g || '')}" placeholder="np. 10, 9.5"></label>
+      <label class="f">Nr certyfikatu<input type="text" id="h-gc" value="${esc(existing?.grade?.cert || '')}" inputmode="numeric"></label>
+      <label class="f">Wartość slabu / szt. (zł)<input type="number" id="h-gv" step="0.01" min="0" value="${existing?.grade?.val > 0 ? existing.grade.val : ''}" placeholder="ręczna wycena"></label>
     </div>
     ${existing?.sold ? `<div class="banner" style="margin-top:10px">Sprzedane ${dPL(existing.sold.date)} za ${P(existing.sold.price_pln)}. <button class="btn sm" id="h-unsell">Cofnij sprzedaż</button></div>` : ''}
     <div class="spread" style="margin-top:14px"><div class="row"><button class="btn primary" id="h-ok">${existing ? 'Zapisz' : 'Dodaj'}</button><button class="btn" data-close>Anuluj</button></div>${existing ? '<button class="btn danger" id="h-del">Usuń</button>' : ''}</div>`, d => {
@@ -1477,6 +1520,12 @@ function formHolding(base, existing) {
       if ($('#h-cur', d).value === 'EUR') cost = +(cost * fxNow()).toFixed(2);
       const rec = existing || { uid: uid(), id: it.id, holo: !!it.holo, ...snapshotMeta(it), sold: null };
       Object.assign(rec, { qty: Math.max(1, +$('#h-q', d).value || 1), date: $('#h-d', d).value || null, cost_pln: cost, note: $('#h-n', d).value.trim() });
+      const gby = $('#h-gby', d).value, gv = parseFloat($('#h-gv', d).value);
+      if (gby) {
+        const g = { ...(rec.grade || {}), by: gby, g: $('#h-gg', d).value.trim(), cert: $('#h-gc', d).value.trim() };
+        if (gv > 0 && gv !== rec.grade?.val) Object.assign(g, { val: gv, t: todayISO() }); else if (!(gv > 0)) { delete g.val; delete g.t; }
+        rec.grade = g;
+      } else delete rec.grade;
       if (!existing) S.vault.portfolio = [...(S.vault.portfolio || []), rec];
       d.close(); await saveVault(`portfel: ${existing ? 'zmiana' : '+'} ${m.name}`); render();
     };
@@ -1643,6 +1692,7 @@ const ACT = {
     });
   },
   photo: a => openPhotos([a.dataset.path]),
+  gradeval: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.grade) formGradeValue(h); },
   pfgrp: a => { const c = pfClosed(), k = a.dataset.set; c.has(k) ? c.delete(k) : c.add(k); ls.set('skarbiec_pf_closed', JSON.stringify([...c])); render(); },
   holdphotos: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.photos?.length) openPhotos(h.photos, itemMeta(h).name); },
 };
