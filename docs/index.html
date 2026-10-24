@@ -87,6 +87,8 @@ table.tbl{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
 .tbl td.name{white-space:normal;min-width:180px}
 .tbl tr:last-child td{border-bottom:0}
 .tbl tr.grp td{background:var(--surface-2);text-align:left;padding:8px 10px}
+.tbl.deals td{vertical-align:top}.tbl.deals td.name,.tbl.deals th:nth-child(2){text-align:left}.tbl tr.hit td{background:color-mix(in srgb,var(--good-ink) 8%,transparent)}
+.dimg{width:64px;height:64px;object-fit:cover;border-radius:6px;background:var(--surface-2);display:block}.dcard{width:40px;border-radius:3px;flex:none}
 .tbl tr.click{cursor:pointer}.tbl tr.click:hover td{background:var(--surface-2)}
 .nm{font-weight:500}.nm small{display:block;color:var(--muted);font-weight:400}
 .badge{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:500;background:var(--surface-2);color:var(--ink-2);white-space:nowrap}
@@ -300,7 +302,10 @@ async function loadEN() {
     // listed.json: wynik wystawiania na Cardmarket (pisze rozszerzenie) {items: {uid: {t, ok, price, qty, err, msg}}}
     S.listed = all.some(f => f.name === 'listed.json')
       ? (await GH.call('/contents/en/listed.json', { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null))?.items || {} : {};
-    const files = all.filter(f => f.name.endsWith('.json') && !['targets.json', 'history.json', 'cmnums.json', 'verify.json', 'sell.json', 'listed.json', 'request.json'].includes(f.name) && !/^opt_/.test(f.name));
+    // okazje z OLX/Allegro (pisze rozszerzenie: deals.js) i ich ustawienia (pisze ta strona)
+    if (all.some(f => f.name === 'deals.json')) S.deals = await GH.call('/contents/en/deals.json', { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => S.deals || null);
+    if (all.some(f => f.name === 'deals_cfg.json')) S.dealsCfg = await GH.call('/contents/en/deals_cfg.json', { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => S.dealsCfg || null);
+    const files = all.filter(f => f.name.endsWith('.json') && !['targets.json', 'history.json', 'cmnums.json', 'verify.json', 'sell.json', 'listed.json', 'request.json', 'deals.json', 'deals_cfg.json'].includes(f.name) && !/^opt_/.test(f.name));
     const docs = await Promise.all(files.map(f => GH.call(`/contents/en/${encodeURIComponent(f.name)}`, { raw: true }, PHOTOS.repo).then(b => b.text()).then(JSON.parse).catch(() => null)));
     const m = new Map();
     for (const d of docs.filter(Boolean)) for (const [k, v] of Object.entries(d.items || {})) {
@@ -312,7 +317,7 @@ async function loadEN() {
 }
 // Otwarta strona sama dociąga nowe wyniki rozszerzenia (komplet co ~15 min, ceny EN/NM): co 3 min, gdy karta jest widoczna,
 // i od razu po powrocie do karty. Przerysowanie tylko, gdy coś się zmieniło i nie wpisujesz akurat niczego.
-const enSig = () => JSON.stringify([JSON.stringify(S.listed || {}).length, (S.opt || []).map(o => o.t), (S.enHist || []).length, Math.max(0, ...[...(S.en?.values() || [])].map(v => Date.parse(v.t) || 0)), Object.keys(S.cmnums || {}).length]);
+const enSig = () => JSON.stringify([S.deals?.t, JSON.stringify(S.listed || {}).length, (S.opt || []).map(o => o.t), (S.enHist || []).length, Math.max(0, ...[...(S.en?.values() || [])].map(v => Date.parse(v.t) || 0)), Object.keys(S.cmnums || {}).length]);
 let _enLiveT = 0, _enLiveOn = false;
 async function enLiveTick() {
   if (document.visibilityState !== 'visible' || !S.vault || Date.now() - _enLiveT < 60e3) return;
@@ -321,7 +326,7 @@ async function enLiveTick() {
   if (enSig() === before) return;
   await applyVerify();
   const typing = document.querySelector('dialog[open]') || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
-  if (!typing && ['watch', 'portfel', 'pulpit'].includes(S.tab)) { const y = scrollY; render(); scrollTo(0, y); }
+  if (!typing && ['watch', 'portfel', 'pulpit', 'okazje'].includes(S.tab)) { const y = scrollY; render(); scrollTo(0, y); }
 }
 function enLiveRefresh() {
   if (_enLiveOn) return; _enLiveOn = true; _enLiveT = Date.now();
@@ -761,7 +766,7 @@ function holdingsCalc() {
 // ============================================================
 //   WIDOKI
 // ============================================================
-const TABS = [['pulpit', 'Pulpit'], ['watch', 'Watchlisty'], ['portfel', 'Portfel'], ['skaner', 'Skaner'], ['rynek', 'Rynek'], ['alerty', 'Alerty'], ['ustawienia', 'Ustawienia']];
+const TABS = [['pulpit', 'Pulpit'], ['watch', 'Watchlisty'], ['portfel', 'Portfel'], ['skaner', 'Skaner'], ['okazje', 'OLX/Allegro'], ['alerty', 'Alerty'], ['ustawienia', 'Ustawienia']];
 function shell() {
   const d = dataDay();
   $('#app').innerHTML = `
@@ -781,7 +786,7 @@ function render() {
   if (S.tab !== 'skaner' && LIVE.stream) liveStop();
   const v = $('#view'); if (!v) return;
   document.querySelectorAll('nav.tabs button').forEach(b => b.dataset.id === S.tab ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'));
-  ({ pulpit: vPulpit, watch: vWatch, portfel: vPortfel, skaner: vSkaner, rynek: vRynek, alerty: vAlerty, ustawienia: vUstawienia })[S.tab](v);
+  ({ pulpit: vPulpit, watch: vWatch, portfel: vPortfel, skaner: vSkaner, okazje: vOkazje, rynek: vRynek, alerty: vAlerty, ustawienia: vUstawienia })[S.tab](v);
   toHash();
 }
 
@@ -1142,6 +1147,79 @@ function rynekResults() {
   ${rows.map(r => { const { ch, real } = moveOf(r), v = enVerdict(r); return `<tr class="click" data-act="detail" data-id="${r[0]}"><td class="name"><div class="nm">${esc(baseName(r[1]))}${!real && ch != null && Math.abs(ch) >= 30 ? ' <span class="badge warn" title="Średnia z 7 dni nie potwierdza ruchu – prawdopodobnie jedna nietypowa sprzedaż"><span class="dot"></span>podejrzane</span>' : ''}<small>${esc([c.exp[r[3]], KIND[c.kinds[r[2]]]].filter(Boolean).join(' · '))}</small></div></td><td><b>${E(r[4])}</b></td><td class="${cls(ch)}">${arrow(ch)}${PC(ch)}</td><td>${E(r[7])}</td>
     <td>${v ? `<span title="${esc(`${v.en.n || 0} ofert EN/NM z wysyłką do PL · sprawdzone ${new Date(v.en.t).toLocaleString('pl-PL')}`)}">${E(v.en.min)}</span><br><span class="badge ${v.cls}">${v.txt}</span>` : watched.has(+r[0]) ? '<span class="muted" title="Rozszerzenie sprawdzi przy najbliższym przebiegu">czeka…</span>' : S.readOnly ? '—' : `<button class="btn sm" data-act="mwadd" data-id="${r[0]}" onclick="event.stopPropagation()">EN/NM</button>`}</td></tr>`; }).join('') || '<tr><td colspan="5" class="empty">Nic nie znaleziono.</td></tr>'}
   </table></div>`;
+}
+
+// ---------- OLX / Allegro: okazje ----------
+// Dane zbiera rozszerzenie co 10 min (extension/deals.js): ogłoszenia z wyszukiwań → Claude Haiku rozpoznaje kartę z tytułu →
+// dopasowanie do Cardmarketu → najtańsza oferta EN/NM (karta CM w tle) → różnica %. Ta strona: widok + ustawienia (en/deals_cfg.json).
+const DEALS_DEF = { v: 1, threshold: 40, searches: ['pokemon karta', 'charizard', 'pikachu', 'psa 10 pokemon', 'booster box pokemon', 'elite trainer box pokemon'], sources: { olx: true, lokalnie: true, allegro: true } };
+const dealsCfgNow = () => ({ ...DEALS_DEF, ...(S.dealsCfg || {}) });
+const SRC_L = { olx: 'OLX', lokalnie: 'Allegro Lokalnie', allegro: 'Allegro' };
+const DK = { single: 'karta', sealed: 'sealed', lot: 'lot / zestaw', other: 'inne' };
+const OK = { f: 'match', src: 'all' };
+async function saveDealsCfg(cfg) {
+  if (S.readOnly || !GH.token || !PHOTOS.repo) return toast('Tryb tylko do odczytu – dodaj token GitHub w Ustawieniach.', 4500);
+  const json = JSON.stringify(cfg, null, 1);
+  try {
+    await PHOTOS.enqueue(async () => {
+      let sha; try { sha = (await GH.call('/contents/en/deals_cfg.json', {}, PHOTOS.repo)).sha; } catch (e) { if (!/ 404/.test(e.message)) throw e; }
+      if (!PHOTOS.branch) PHOTOS.branch = (await GH.call('', {}, PHOTOS.repo)).default_branch || 'main';
+      await GH.call('/contents/en/deals_cfg.json', { method: 'PUT', body: JSON.stringify({ message: `okazje: próg ${cfg.threshold}%, wyszukiwań ${cfg.searches.length}`, content: b64e(new TextEncoder().encode(json)), branch: PHOTOS.branch, ...(sha ? { sha } : {}) }) }, PHOTOS.repo);
+    });
+    S.dealsCfg = cfg; toast('Zapisano ✓ Rozszerzenie użyje tego przy następnym sprawdzaniu (co 10 min).'); render();
+  } catch (e) { toast('Nie zapisano: ' + e.message, 5000); }
+}
+function dealsKick() {
+  if (document.documentElement.dataset.skarbiecEnExt) { document.dispatchEvent(new Event('skarbiec-deals-run')); toast('Rozszerzenie sprawdza OLX i Allegro – nowe oferty pojawią się tu same.', 4000); }
+  else requestDesktop('deals').then(ok => ok && toast('Zlecone komputerowi – za kilka minut (Chrome z rozszerzeniem musi być włączony).', 4500));
+}
+function vOkazje(v) {
+  const cfg = dealsCfgNow(), d = S.deals, fx = d?.fx || fxNow();
+  let items = (d?.items || []).filter(it => OK.src === 'all' || it.src === OK.src);
+  if (OK.f === 'match') items = items.filter(it => it.match);
+  if (OK.f === 'deal') items = items.filter(it => it.match && it.diff != null && it.diff <= -cfg.threshold);
+  if (OK.f === 'deal' || OK.f === 'match') items.sort((a, b) => (a.diff ?? 999) - (b.diff ?? 999));
+  const nDeal = (d?.items || []).filter(it => it.match && it.diff != null && it.diff <= -cfg.threshold).length;
+  const ago = d?.t ? agoPL(d.t) : null;
+  v.innerHTML = `
+  <div class="spread"><div><h1>OLX / Allegro</h1><p class="sub">Ogłoszenia z OLX, Allegro Lokalnie i Allegro porównane z najtańszą ofertą EN/NM na Cardmarket. Rozszerzenie sprawdza nowe co 10 min (Allegro co 30 min) i pisze na Discord, gdy oferta jest tańsza o próg.</p></div>
+    <div class="row"><button class="btn primary" data-act="dealsrun">🔄 Sprawdź teraz</button><button class="btn" data-act="dealsthr">Próg: ${cfg.threshold}%</button><button class="btn" data-act="dealscfg">Wyszukiwania (${cfg.searches.length})</button></div></div>
+  <div class="grid g4" style="margin:12px 0">
+    <div class="card stat"><div class="lbl">Okazje (≤ −${cfg.threshold}%)</div><div class="val">${nDeal}</div><div class="note">porównanie z najtańszym EN/NM</div></div>
+    <div class="card stat"><div class="lbl">Ogłoszeń w bazie</div><div class="val">${(d?.items || []).length}</div><div class="note">${(d?.items || []).filter(i => i.match).length} rozpoznanych i dopasowanych</div></div>
+    <div class="card stat"><div class="lbl">Ostatnie sprawdzenie</div><div class="val" style="font-size:20px">${ago || '—'}</div><div class="note">${d?.t ? new Date(d.t).toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : enScript() ? 'rozszerzenie jeszcze nic nie zapisało' : 'potrzebne rozszerzenie Chrome na komputerze'}${d?.t && Date.now() - Date.parse(d.t) > 40 * 60e3 ? ' · <span class="down">dawno – czy Chrome z rozszerzeniem jest włączony?</span>' : ''}</div></div>
+    <div class="card stat"><div class="lbl">Źródła</div><div class="val" style="font-size:16px">${Object.entries(cfg.sources).filter(([, on]) => on).map(([k]) => SRC_L[k]).join(', ') || '—'}</div><div class="note">${(d?.errs || []).length ? `<span class="down">${esc(d.errs[0])}</span>` : 'bez błędów'}</div></div>
+  </div>
+  <div class="card">
+    <div class="spread" style="flex-wrap:wrap;gap:8px"><div class="chips">${[['deal', `Okazje (${nDeal})`], ['match', 'Dopasowane'], ['all', 'Wszystkie']].map(([k, l]) => `<button class="chip" data-act="dealsf" data-f="${k}" aria-pressed="${OK.f === k}">${l}</button>`).join('')}</div>
+      <div class="chips">${[['all', 'Wszędzie'], ['olx', 'OLX'], ['lokalnie', 'Lokalnie'], ['allegro', 'Allegro']].map(([k, l]) => `<button class="chip" data-act="dealssrc" data-s="${k}" aria-pressed="${OK.src === k}">${l}</button>`).join('')}</div></div>
+    <div class="tblw" style="margin-top:10px"><table class="tbl deals">
+      <tr><th>Zdjęcie</th><th>Karta</th><th>Cena</th><th>Najtaniej EN/NM (Cardmarket)</th><th>Różnica</th><th></th></tr>
+      ${items.slice(0, 200).map(it => { const m = it.match, ref = it.ref, deal = it.diff != null && it.diff <= -cfg.threshold, qty = Math.max(1, it.det?.qty || 1);
+        return `<tr${deal ? ' class="hit"' : ''}>
+        <td><a href="${esc(it.url)}" target="_blank" rel="noopener">${it.img ? `<img class="dimg" src="${esc(it.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="muted">—</span>'}</a></td>
+        <td class="name"><div class="nm" style="display:flex;gap:8px;align-items:flex-start">${m?.img ? `<img class="dcard" src="${esc(m.img)}" alt="" loading="lazy">` : ''}<div style="min-width:0">${m ? `${esc(m.name)} <span class="muted" style="font-weight:400">${esc(m.number || '')}</span>${m.idp ? ' ' + cmA(m.idp, m.name) : ''}<small>${esc(m.set || '')}</small>` : `<span class="muted">${esc(DK[it.det?.kind] || '?')}${it.det?.name_en ? ': ' + esc(it.det.name_en) + (it.det.number ? ' ' + esc(it.det.number) + (it.det.set_total ? '/' + esc(it.det.set_total) : '') : '') : ''}</span>`}
+          ${it.det?.language === 'ja' ? '<span class="badge">JP</span>' : ''}${it.det?.grade ? ` <span class="badge good">${esc(it.det.grade)}</span>` : ''}${qty > 1 ? ` <span class="badge">${qty} szt.</span>` : ''}
+          <small title="${esc(it.title)}">„${esc(it.title.length > 70 ? it.title.slice(0, 70) + '…' : it.title)}”</small></div></div></td>
+        <td><b>${P(it.price)}</b>${qty > 1 ? `<br><small class="muted">${P(it.price / qty)} / szt.</small>` : ''}<br><small class="muted">${SRC_L[it.src] || it.src}${it.city ? ' · ' + esc(it.city) : ''}${it.t ? ' · ' + agoPL(it.t) : ''}</small></td>
+        <td>${ref ? `${E(ref.eur)}<br><small class="muted">≈ ${P(ref.eur * fx)}${ref.src === 'cm' ? ` · ${ref.n ?? '?'} ofert` : ' · trend (EN/NM w drodze)'}</small>` : m ? '<span class="muted">sprawdzam…</span>' : '<span class="muted" title="Rozszerzenie porównuje tylko jednoznacznie rozpoznane karty EN i sealed – JP, sloty i loty wymagają ręcznej oceny">—</span>'}</td>
+        <td>${it.diff != null ? `<b class="${it.diff < 0 ? 'up' : 'down'}">${it.diff > 0 ? '+' : ''}${String(it.diff).replace('.', ',')}%</b>${deal ? '<br><span class="badge good">okazja</span>' : ''}` : '—'}</td>
+        <td><a class="btn sm" href="${esc(it.url)}" target="_blank" rel="noopener">Otwórz ↗</a></td></tr>`; }).join('') || `<tr><td colspan="6" class="empty">${d ? 'Brak ofert w tym widoku.' : 'Jeszcze nic – rozszerzenie zapisze pierwsze ogłoszenia w ciągu 10 min od przeładowania (↻).'}</td></tr>`}
+    </table></div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Różnica = cena ogłoszenia (za sztukę) vs najtańsza oferta EN/NM od zaufanego sprzedawcy na Cardmarket (≥ 10 sprzedaży, UE), przeliczona po kursie NBP ${String(fx.toFixed(4)).replace('.', ',')}. Do czasu sprawdzenia Cardmarketu porównanie jest z trendem (wszystkie języki) – powiadomienia przychodzą tylko po porównaniu z EN/NM. Karty JP, sloty i loty nie są porównywane automatycznie. Zawsze sprawdź zdjęcia i sprzedawcę – tytuły bywają mylące.</p>
+  </div>`;
+}
+function formDealsCfg() {
+  const cfg = dealsCfgNow();
+  modal('Wyszukiwania OLX / Allegro', `<p class="muted" style="margin-top:0;font-size:13px">Jedno wyszukiwanie w linii – tak, jak wpisujesz w OLX/Allegro. Każde to kilka zapytań co 10 min, więc lepiej konkretnie (postać, dodatek, „psa 10”) niż samo „pokemon”.</p>
+    <textarea id="dc-q" rows="8" style="width:100%;font:inherit">${esc(cfg.searches.join('\n'))}</textarea>
+    <div class="row" style="margin-top:10px;gap:14px">${Object.keys(SRC_L).map(k => `<label class="row"><input type="checkbox" id="dc-${k}" ${cfg.sources[k] ? 'checked' : ''}> ${SRC_L[k]}</label>`).join('')}</div>
+    <div class="row" style="margin-top:14px"><button class="btn primary" id="dc-ok">Zapisz</button><button class="btn" data-close>Anuluj</button></div>`, d => {
+    $('#dc-ok', d).onclick = async () => {
+      const searches = [...new Set($('#dc-q', d).value.split('\n').map(x => x.trim()).filter(Boolean))].slice(0, 20);
+      d.close(); await saveDealsCfg({ ...cfg, searches, sources: Object.fromEntries(Object.keys(SRC_L).map(k => [k, $(`#dc-${k}`, d).checked])) });
+    };
+  });
 }
 
 // ---------- Skaner zdjęć ----------
@@ -1986,6 +2064,15 @@ const ACT = {
   wlrange: a => { ls.set('skarbiec_wl_range', a.dataset.r); render(); },
   mwadd: a => marketCheck([+a.dataset.id]),
   mwtop: () => marketCheck(searchCatalog(R.q, R).rows.slice(0, 20).map(r => +r[0])),
+  dealsrun: () => dealsKick(),
+  dealsf: a => { OK.f = a.dataset.f; render(); },
+  dealssrc: a => { OK.src = a.dataset.s; render(); },
+  dealscfg: () => formDealsCfg(),
+  dealsthr: () => {
+    const cfg = dealsCfgNow(), v = prompt('Powiadamiaj, gdy ogłoszenie jest tańsze od najtańszej oferty EN/NM na Cardmarket o co najmniej (%):', cfg.threshold);
+    const n = parseFloat(String(v ?? '').replace(',', '.'));
+    if (v != null && n > 0 && n < 100) saveDealsCfg({ ...cfg, threshold: n });
+  },
   pfgrp: a => { const c = pfClosed(), k = a.dataset.set; c.has(k) ? c.delete(k) : c.add(k); ls.set('skarbiec_pf_closed', JSON.stringify([...c])); render(); },
   holdphotos: a => { const h = S.vault.portfolio.find(x => x.uid === a.dataset.uid); if (h?.photos?.length) openPhotos(h.photos, itemMeta(h).name); },
 };
@@ -2063,7 +2150,7 @@ async function unlock(pw, remember) {
 // zakładka w adresie (#watch, #portfel, #watch/<idListy>…): odświeżenie zostawia cię w tym samym miejscu, działa „Wstecz”
 function fromHash() {
   const [t, w] = location.hash.slice(1).split('/');
-  if (TABS.some(([id]) => id === t)) { S.tab = t; if (w) S.wl = decodeURIComponent(w); }
+  if (TABS.some(([id]) => id === t) || t === 'rynek') { S.tab = t; if (w) S.wl = decodeURIComponent(w); }   // #rynek: stara zakładka, nadal pod adresem
 }
 function toHash() {
   const want = '#' + S.tab + (S.tab === 'watch' && S.wl ? '/' + encodeURIComponent(S.wl) : '');
