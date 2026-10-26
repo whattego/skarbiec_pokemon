@@ -761,9 +761,9 @@ function autoLogHTML(opt) {
   if (!ev.length) return '';
   const tm = t => new Date(t).toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   const txt = e => ({
-    ok: `<span class="up">🛒 w koszyku ${E(e.cart)} ≤ próg ${E(e.limit)} – wysłane na Discord</span>`,
+    ok: `<span class="up">🛒 w koszyku ${E(e.cart)} ≤ próg ${E(e.limit)} – wysłane na Discord${e.filled ? ` (dobrane ${e.filled} z innych ofert)` : ''}</span>`,
     over: `w koszyku ${E(e.cart)} > próg ${E(e.limit)} – prawdziwa wysyłka wyższa${e.unv ? ` (${e.unv} sprzedawców bez sprawdzonej wysyłki)` : ''}, koszyk wyczyszczony, bez powiadomienia`,
-    partial: `w koszyku tylko ${e.nIn}/${e.n} kart${e.again ? ` (mimo drugiej rundy dla ${e.again})` : ' (oferty zniknęły)'} – koszyk wyczyszczony, bez powiadomienia${e.fail?.length ? `<br><small class="muted">błędy: ${esc(e.fail.join('; '))}</small>` : ''}${e.resp ? `<br><small class="muted" title="Odpowiedź Cardmarketu na dodanie do koszyka">CM: ${esc(e.resp)}</small>` : ''}`,
+    partial: `w koszyku tylko ${e.nIn}/${e.n} kart${e.again ? ` (mimo drugiej rundy dla ${e.again})` : ' (oferty zniknęły)'}${e.filled ? `, próbowałem dobrać ${e.filled} z innych ofert` : ''} – koszyk wyczyszczony, bez powiadomienia${e.fail?.length ? `<br><small class="muted">błędy: ${esc(e.fail.join('; '))}</small>` : ''}${e.resp ? `<br><small class="muted" title="Odpowiedź Cardmarketu na dodanie do koszyka">CM: ${esc(e.resp)}</small>` : ''}`,
     busy: 'koszyk na Cardmarkecie nie był pusty – nic nie dodałem (opróżnij go albo zapłać)',
   })[e.res] || esc(e.res);
   return `<details style="margin-top:6px"${ev[0].res !== 'ok' && Date.now() - ev[0].t < 864e5 ? ' open' : ''}><summary class="muted" style="font-size:12px;cursor:pointer">Auto-koszyk – próby z ostatnich 7 dni (${ev.length})</summary>
