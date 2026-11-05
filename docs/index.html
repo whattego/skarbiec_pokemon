@@ -872,7 +872,7 @@ function holdingsCalc() {
 // ============================================================
 //   WIDOKI
 // ============================================================
-const TABS = [['pulpit', 'Pulpit'], ['watch', 'Watchlisty'], ['portfel', 'Portfel'], ['skaner', 'Skaner'], ['okazje', 'OLX/Allegro'], ['alerty', 'Alerty'], ['ustawienia', 'Ustawienia']];
+const TABS = [['pulpit', 'Pulpit'], ['watch', 'Watchlisty'], ['portfel', 'Portfel'], ['skaner', 'Skaner'], ['alerty', 'Alerty'], ['ustawienia', 'Ustawienia']];
 function shell() {
   const d = dataDay();
   $('#app').innerHTML = `
@@ -888,6 +888,7 @@ function shell() {
   render();
 }
 function render() {
+  if (S.tab === 'okazje') S.tab = 'pulpit';   // bot OLX/Allegro wyłączony 5.11.2026 – stary adres #okazje prowadzi na Pulpit
   killCharts();
   if (S.tab !== 'skaner' && LIVE.stream) liveStop();
   const v = $('#view'); if (!v) return;
